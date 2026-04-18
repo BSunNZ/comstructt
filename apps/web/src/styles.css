@@ -289,6 +289,9 @@ p { font-size: 0.875rem; color: var(--text-secondary); }
   padding: 24px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
+.full-width-panel {
+  grid-column: 1 / -1;
+}
 .panel-eyebrow {
   text-transform: uppercase;
   font-size: 0.7rem;
@@ -408,7 +411,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--bg-container);
   color: var(--text-secondary);
 }
-.status-pill.confirmed, .status-pill.published, .status-pill.approved { background: #111; color: #FFF; border-color: #111; }
+.status-pill.confirmed, .status-pill.published { background: #111; color: #FFF; border-color: #111; }
 .status-pill.pending-approval {
   background: #fef3c7;
   border-color: #f59e0b;

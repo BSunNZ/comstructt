@@ -262,6 +262,10 @@ app.get("/api/catalog-items", async (request, response, next) => {
         typeof request.query.normalizedCategory === "string"
           ? request.query.normalizedCategory
           : undefined,
+      projectId:
+        typeof request.query.projectId === "string"
+          ? request.query.projectId
+          : undefined,
     });
 
     const payload: CatalogListResponse = { items };

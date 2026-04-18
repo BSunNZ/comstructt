@@ -17,7 +17,6 @@ export type CatalogStatus = (typeof CATALOG_STATUSES)[number];
 export const ORDER_STATUSES = [
   "draft",
   "pending_approval",
-  "approved",
   "ordered",
   "delivered",
   "rejected",

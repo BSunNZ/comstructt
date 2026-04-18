@@ -211,7 +211,6 @@ const DEFAULT_ORDER_SETTINGS: ProcurementOrderSettings = {
 const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   draft: "Draft",
   pending_approval: "Pending approval",
-  approved: "Approved",
   ordered: "Ordered",
   delivered: "Delivered",
   rejected: "Declined",
@@ -393,9 +392,14 @@ export default function App() {
     setIsOrderLoading(true);
 
     try {
+      const catalogQuery = new URLSearchParams({ catalogStatus: "published" });
+      if (orderProjectId) {
+        catalogQuery.set("projectId", orderProjectId);
+      }
+
       const [ordersResponse, catalogResponse] = await Promise.all([
         fetch(`${API_BASE}/procurement-orders`),
-        fetch(`${API_BASE}/catalog-items?catalogStatus=published`),
+        fetch(`${API_BASE}/catalog-items?${catalogQuery.toString()}`),
       ]);
 
       const ordersPayload = await readJson<ProcurementOrdersResponse>(ordersResponse);
@@ -476,7 +480,7 @@ export default function App() {
     setPreview(null);
     setProjectPricePreview(null);
     setProjectPriceMappingDraft([]);
-  }, [activeView]);
+  }, [activeView, orderProjectId]);
 
   useEffect(() => {
     if (activeView !== "orders") {
@@ -676,7 +680,6 @@ export default function App() {
         {
           draft: 0,
           pending_approval: 0,
-          approved: 0,
           ordered: 0,
           delivered: 0,
           rejected: 0,
@@ -1115,7 +1118,7 @@ export default function App() {
       setRejectionReasonDraft("");
       setSuccess(
         action === "approve"
-          ? "Order approved and sent to ordering."
+          ? "Order approved and automatically ordered."
           : `Order moved to ${ORDER_STATUS_LABELS[updated.status]}.`
       );
     } catch (updateError) {
@@ -1918,21 +1921,23 @@ export default function App() {
             <p className="page-description">{headerCopy.title}</p>
           </header>
           
-          <div className="utility-toolbar">
-            <div className="search-input-wrapper">
-              <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-              <input type="text" className="search-input" placeholder="Search..." />
+          {["catalog", "orders", "supplierData"].includes(activeView) ? null : (
+            <div className="utility-toolbar">
+              <div className="search-input-wrapper">
+                <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" className="search-input" placeholder="Search..." />
+              </div>
+              <select className="filter-dropdown">
+                <option>Last 15 days</option>
+              </select>
+              <select className="filter-dropdown">
+                <option>All Statuses</option>
+              </select>
+              <button className="icon-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </button>
             </div>
-            <select className="filter-dropdown">
-              <option>Last 15 days</option>
-            </select>
-            <select className="filter-dropdown">
-              <option>All Statuses</option>
-            </select>
-            <button className="icon-btn">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </button>
-          </div>
+          )}
 
           <div className="data-container">
             {error ? <p className="banner error">{error}</p> : null}
@@ -2194,7 +2199,7 @@ export default function App() {
         ) : activeView === "projects" ? (
           <>
             <section className="content-grid">
-              <article className="panel database-panel">
+              <article className="panel database-panel full-width-panel">
                 <div className="panel-header">
                   <div>
                     <p className="panel-eyebrow">Managed projects</p>
@@ -2590,16 +2595,6 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className={`stat-card ${orderStatusFilter === "approved" ? "active" : ""}`}
-                onClick={() =>
-                  setOrderStatusFilter((current) => (current === "approved" ? "all" : "approved"))
-                }
-              >
-                <span className="stat-label">Approved</span>
-                <strong>{orderStatusCounts.approved}</strong>
-              </button>
-              <button
-                type="button"
                 className={`stat-card ${orderStatusFilter === "ordered" ? "active" : ""}`}
                 onClick={() =>
                   setOrderStatusFilter((current) => (current === "ordered" ? "all" : "ordered"))
@@ -2655,10 +2650,6 @@ export default function App() {
               </div>
 
               <div className="order-filters-summary">
-                <span className="database-chip">
-                  Status:{" "}
-                  {orderStatusFilter === "all" ? "All statuses" : ORDER_STATUS_LABELS[orderStatusFilter]}
-                </span>
                 <span className="database-chip">
                   Project:{" "}
                   {orderProjectFilter === "all"
@@ -2763,15 +2754,6 @@ export default function App() {
                               {rejectingOrderId === order.id ? "Close rejection" : "Reject"}
                             </button>
                           </>
-                        ) : null}
-                        {order.status === "approved" ? (
-                          <button
-                            type="button"
-                            disabled={savingOrderId === order.id}
-                            onClick={() => void updateOrderStatus(order.id, "mark_ordered")}
-                          >
-                            {savingOrderId === order.id ? "Updating..." : "Mark ordered"}
-                          </button>
                         ) : null}
                         {order.status === "ordered" ? (
                           <button

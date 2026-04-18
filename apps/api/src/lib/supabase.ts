@@ -50,6 +50,8 @@ const db = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 const PROCUREMENT_ORDERS_MIGRATION = "supabase/migrations/20260418_add_procurement_orders.sql";
+const SUPPLIER_PROJECT_PRICES_MIGRATION =
+  "supabase/migrations/20260418_add_supplier_product_mapping_project_prices.sql";
 const PROCUREMENT_ORDER_TABLES = new Set([
   "procurement_order_settings",
   "procurement_orders",
@@ -128,6 +130,7 @@ interface DbSupplierProductMapping {
   product_id: string;
   supplier_sku: string | null;
   contract_price: number | null;
+  project_prices?: unknown | null;
   min_order_qty: number | null;
   created_at: string;
 }
@@ -165,15 +168,6 @@ interface DbProject {
   address: string | null;
   min_approval: number | null;
   created_at: string;
-}
-
-interface DbProjectSpecificPrice {
-  id: string;
-  project_id: string;
-  supplier_product_mapping_id: string;
-  project_price: number;
-  created_at: string;
-  updated_at: string;
 }
 
 const DATABASE_SCHEMAS: Record<DatabaseTableName, DatabaseTableDefinition> = {
@@ -399,6 +393,34 @@ function rethrowMissingProcurementOrderSchema(error: unknown): never {
   );
 }
 
+function rethrowMissingSupplierProjectPriceSchema(error: unknown): never {
+  const missingColumn = getMissingSchemaColumn(error, "supplier_product_mapping");
+  if (missingColumn !== "project_prices") {
+    throw error;
+  }
+
+  throw new ApiError(
+    503,
+    `Project-specific price imports are unavailable because "supplier_product_mapping.project_prices" is missing. Apply ${SUPPLIER_PROJECT_PRICES_MIGRATION} to the Supabase project at ${SUPABASE_URL}.`
+  );
+}
+
+function parseProjectPrices(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const result: Record<string, number> = {};
+  for (const [projectId, rawPrice] of Object.entries(value as Record<string, unknown>)) {
+    const parsedPrice = typeof rawPrice === "number" ? rawPrice : Number(rawPrice);
+    if (Number.isFinite(parsedPrice)) {
+      result[projectId] = parsedPrice;
+    }
+  }
+
+  return result;
+}
+
 async function insertWithSchemaFallback<T extends object>(
   tableName: string,
   rows: T[],
@@ -534,7 +556,8 @@ function toImportSummary(
 function toCatalogItem(
   product: DbNormalizedProduct,
   mapping: DbSupplierProductMapping,
-  supplier: DbSupplier
+  supplier: DbSupplier,
+  projectId?: string
 ): CatalogItem {
   let catalogStatus: "imported" | "published" | "excluded" = "imported";
   if (product.catalog_status) {
@@ -594,6 +617,12 @@ function toCatalogItem(
     }
   } catch {}
 
+  const projectPrices = parseProjectPrices(mapping.project_prices);
+  const effectiveUnitPrice =
+    projectId && Number.isFinite(projectPrices[projectId])
+      ? projectPrices[projectId]
+      : mapping.contract_price ?? 0;
+
   return {
     id: product.id,
     supplierId: supplier.id,
@@ -609,7 +638,7 @@ function toCatalogItem(
     normalizedCategory: assertNormalizedCategory(product.category),
     subcategory: product.subcategory ?? "",
     unit: product.unit ?? "",
-    unitPrice: mapping.contract_price ?? 0,
+    unitPrice: effectiveUnitPrice,
     consumptionType: product.consumption_type ?? "",
     hazardous: Boolean(product.is_hazmat ?? product.hazardous),
     storageLocation: product.storage_location ?? "",
@@ -686,12 +715,15 @@ function normalizeOrderStatus(value: string): ProcurementOrder["status"] {
   if (
     value === "draft" ||
     value === "pending_approval" ||
-    value === "approved" ||
     value === "ordered" ||
     value === "delivered" ||
     value === "rejected"
   ) {
     return value;
+  }
+
+  if (value === "approved") {
+    return "ordered";
   }
 
   if (value === "requested") {
@@ -803,13 +835,6 @@ function toProcurementOrder(
       order.notes
     );
     submittedAt = order.created_at;
-  }
-
-  if (status === "approved") {
-    approvalRoute = requiresCentralProcurement ? "central_procurement" : "project_manager";
-    approvalReason = appendOrderNotes("Approved for ordering.", order.notes);
-    submittedAt = order.created_at;
-    approvedAt = order.created_at;
   }
 
   if (status === "ordered") {
@@ -1283,59 +1308,51 @@ export async function confirmProjectPriceImport(input: {
     input.mapping
   );
   const resolvedRows = await resolveProjectPriceImportRows(input.rows, mapping);
-  const now = new Date().toISOString();
   const matchedRows = resolvedRows.filter(
     (row): row is ResolvedProjectPriceImportRow & { mappingId: string; projectPrice: number } =>
       row.matched && Boolean(row.mappingId) && typeof row.projectPrice === "number"
   );
 
-  if (matchedRows.length > 0) {
-    const mappingIds = matchedRows.map((row) => row.mappingId);
-    const existingRows = await run<DbProjectSpecificPrice[]>(
-      db
-        .from("project_specific_prices")
-        .select("*")
-        .eq("project_id", project.id)
-        .in("supplier_product_mapping_id", mappingIds)
-    );
+  try {
+    if (matchedRows.length > 0) {
+      const mappingPriceById = new Map<string, number>();
+      for (const row of matchedRows) {
+        mappingPriceById.set(row.mappingId, row.projectPrice);
+      }
 
-    const existingByMappingId = new Map(
-      existingRows.map((row) => [row.supplier_product_mapping_id, row])
-    );
-    const inserts: Array<Record<string, unknown>> = [];
+      const mappingIds = Array.from(mappingPriceById.keys());
+      const mappings = await run<DbSupplierProductMapping[]>(
+        db.from("supplier_product_mapping").select("*").in("id", mappingIds)
+      );
+      const mappingById = new Map(mappings.map((mappingRow) => [mappingRow.id, mappingRow]));
 
-    for (const row of matchedRows) {
-      const existing = existingByMappingId.get(row.mappingId);
-      if (existing) {
+      for (const [mappingId, projectPrice] of mappingPriceById) {
+        const mappingRow = mappingById.get(mappingId);
+        if (!mappingRow) {
+          throw new ApiError(
+            409,
+            "Some supplier mappings changed after the preview was generated. Refresh the preview and try again."
+          );
+        }
+
+        const nextProjectPrices = parseProjectPrices(mappingRow.project_prices);
+        nextProjectPrices[project.id] = projectPrice;
+
         await run(
           db
-            .from("project_specific_prices")
-            .update({
-              project_price: row.projectPrice,
-              updated_at: now,
-            })
-            .eq("id", existing.id)
+            .from("supplier_product_mapping")
+            .update({ project_prices: nextProjectPrices })
+            .eq("id", mappingId)
         );
-      } else {
-        inserts.push({
-          id: randomUUID(),
-          project_id: project.id,
-          supplier_product_mapping_id: row.mappingId,
-          project_price: row.projectPrice,
-          created_at: now,
-          updated_at: now,
-        });
       }
     }
-
-    if (inserts.length > 0) {
-      await run(db.from("project_specific_prices").insert(inserts));
-    }
+  } catch (error) {
+    rethrowMissingSupplierProjectPriceSchema(error);
   }
 
   return {
     project: toProjectSummary(project),
-    importedPrices: matchedRows.length,
+    importedPrices: new Set(matchedRows.map((row) => row.mappingId)).size,
     unmatchedRows: resolvedRows.length - matchedRows.length,
   };
 }
@@ -1708,6 +1725,7 @@ export async function listCatalogItems(filters: {
   supplier?: string;
   catalogStatus?: string;
   normalizedCategory?: string;
+  projectId?: string;
 }): Promise<CatalogItem[]> {
   let query = db.from("normalized_products").select("*").order("created_at", { ascending: false });
 
@@ -1740,7 +1758,7 @@ export async function listCatalogItems(filters: {
     const product = productById.get(mapping.product_id);
     const supplier = supplierById.get(mapping.supplier_id);
     if (!product || !supplier) return [];
-    return [toCatalogItem(product, mapping, supplier)];
+    return [toCatalogItem(product, mapping, supplier, filters.projectId)];
   });
 
   if (!filters.supplier || filters.supplier === "all") return items;
@@ -1992,7 +2010,7 @@ export async function updateProcurementOrderStatus(
       throw new ApiError(409, "Only pending orders can be approved.");
     }
 
-    patch.status = "approved";
+    patch.status = "ordered";
     patch.rejection_reason = null;
   }
 
@@ -2010,7 +2028,7 @@ export async function updateProcurementOrderStatus(
   }
 
   if (input.action === "mark_ordered") {
-    if (currentStatus !== "approved") {
+    if (order.status !== "approved" && currentStatus !== "ordered") {
       throw new ApiError(409, "Only approved orders can be marked as ordered.");
     }
 
