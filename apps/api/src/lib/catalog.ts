@@ -1,3 +1,8 @@
+import { randomUUID } from "crypto";
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
 import {
   CATALOG_STATUSES,
   CSV_IMPORT_TARGETS,
@@ -198,3 +203,54 @@ export function toStringRecord(input: Record<string, unknown>): Record<string, s
     Object.entries(input).map(([key, value]) => [key, String(value ?? "")])
   );
 }
+
+export async function enrichProductRowWithLLM(
+  productName: string,
+  rawCategory: string
+) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert construction site procurement AI.
+Your job is to classify C-materials (tail spend items like consumables and PPE) into structured database fields for our application.
+Given a product name and its raw category from a supplier, output a JSON object with EXACTLY these keys:
+- "category": Must be one of ["Fasteners", "Electrical", "PPE", "Consumables", "Tools", "Chemicals", "Measuring", "Other"]
+- "typicalSite": A string representing the typical trade or building element phase (e.g. "Drywall", "Concrete Work", "Tiling", "Electrical", "General Site", "Safety").
+- "consumptionType": Must be either "Consumable" (used up, like tape, screws, glue) or "Asset/Tool" (retained, like helmet, drill bit, measuring tape).
+- "isHazmat": boolean true/false. True if it's a spray, paint, chemical, glue, or flammable.
+- "storageLocation": A short string suggesting where it usually lives (e.g. "Safety Cabinet", "Open Yard", "Toolbox", "Consumables Rack").`,
+        },
+        {
+          role: "user",
+          content: `Product: ${productName}\nRaw Supplier Category: ${rawCategory}`,
+        },
+      ],
+      temperature: 0.1,
+    });
+
+    const result = JSON.parse(response.choices[0].message.content || "{}");
+    // Only map category strictly to NormalizedCategory, default to "Other"
+    return {
+      category: result.category || "Other",
+      typicalSite: result.typicalSite || "General",
+      consumptionType: result.consumptionType || "Consumable",
+      isHazmat: Boolean(result.isHazmat),
+      storageLocation: result.storageLocation || "Warehouse",
+    };
+  } catch (error) {
+    console.error("LLM Enrichment failed:", error);
+    // Fallback using the old hardcoded logic
+    return {
+      category: normalizeCategory(rawCategory || productName),
+      typicalSite: "General",
+      consumptionType: "Consumable",
+      isHazmat: false,
+      storageLocation: "Warehouse",
+    };
+  }
+}
+

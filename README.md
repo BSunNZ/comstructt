@@ -31,7 +31,8 @@ Comstruct now includes a procurement-first MVP for importing supplier CSVs into 
    copy apps\api\.env.example apps\api\.env
    ```
 
-3. Apply the migration in [supabase/migrations/20260418_procurement_catalog_cleanup.sql](/C:/Users/zicra/Documents/Codex/2026-04-18-can-you-create-a-github-repository-2/supabase/migrations/20260418_procurement_catalog_cleanup.sql).
+3. Apply `supabase/migrations/20260418_procurement_catalog_cleanup.sql` to your Supabase database.
+   This migration bootstraps the required tables for a fresh project and also upgrades older schemas.
 
 4. Start both apps:
 

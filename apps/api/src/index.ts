@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import cors from "cors";
 import express from "express";
 import multer from "multer";
@@ -10,13 +8,13 @@ import type {
   CsvImportPreviewResponse,
   ErrorResponse,
   ImportBatchListResponse,
-  UpdateCatalogItemInput
+  UpdateCatalogItemInput,
 } from "@comstruct/shared";
 import {
   buildDefaultMapping,
   sanitizeIncomingMapping,
   validateColumns,
-  validateMapping
+  validateMapping,
 } from "./lib/catalog.js";
 import {
   ApiError,
@@ -24,22 +22,13 @@ import {
   createCsvImportPreview,
   listCatalogItems,
   listImports,
-  updateCatalogItem
+  updateCatalogItem,
 } from "./lib/supabase.js";
-
-if (typeof process.loadEnvFile === "function") {
-  const envPath = join(process.cwd(), ".env");
-  if (existsSync(envPath)) {
-    process.loadEnvFile(envPath);
-  }
-}
 
 const app = express();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024
-  }
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 app.use(cors());
@@ -49,62 +38,56 @@ app.get("/health", (_request, response) => {
   response.json({ ok: true });
 });
 
-app.post("/api/imports/csv", upload.single("file"), async (request, response, next) => {
-  try {
-    if (!request.file) {
-      throw new ApiError(400, "No CSV file was uploaded.");
+app.post(
+  "/api/imports/csv",
+  upload.single("file"),
+  async (request, response, next) => {
+    try {
+      if (!request.file) {
+        throw new ApiError(400, "No CSV file was uploaded.");
+      }
+
+      const fileContent = request.file.buffer.toString("utf-8");
+      const records = parse(fileContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      }) as Array<Record<string, unknown>>;
+
+      if (records.length === 0) {
+        throw new ApiError(400, "The CSV file is empty.");
+      }
+
+      const columns = Object.keys(records[0] ?? {});
+      const requestedMapping = Array.isArray(request.body.mapping)
+        ? (request.body.mapping as CsvImportMapping[])
+        : request.body.mapping
+          ? (JSON.parse(request.body.mapping as string) as CsvImportMapping[])
+          : undefined;
+
+      const mapping = sanitizeIncomingMapping(
+        columns,
+        requestedMapping ?? buildDefaultMapping(columns)
+      );
+
+      const payload: CsvImportPreviewResponse = await createCsvImportPreview({
+        fileName: request.file.originalname,
+        rows: records,
+        mapping,
+      });
+
+      response.json(payload);
+    } catch (error) {
+      next(error);
     }
-
-    const fileContent = request.file.buffer.toString("utf-8");
-    const records = parse(fileContent, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true
-    }) as Array<Record<string, unknown>>;
-
-    if (records.length === 0) {
-      throw new ApiError(400, "The CSV file is empty.");
-    }
-
-    const columns = Object.keys(records[0] ?? {});
-    const missingColumns = validateColumns(columns);
-
-    if (missingColumns.length > 0) {
-      throw new ApiError(400, "The CSV file is missing required columns.", missingColumns);
-    }
-
-    const requestedMapping = Array.isArray(request.body.mapping)
-      ? (request.body.mapping as CsvImportMapping[])
-      : request.body.mapping
-        ? (JSON.parse(request.body.mapping as string) as CsvImportMapping[])
-        : undefined;
-
-    const mapping = sanitizeIncomingMapping(columns, requestedMapping ?? buildDefaultMapping(columns));
-    const mappingErrors = validateMapping(mapping, columns);
-
-    if (mappingErrors.length > 0) {
-      throw new ApiError(400, "The CSV mapping is invalid.", mappingErrors);
-    }
-
-    const payload: CsvImportPreviewResponse = await createCsvImportPreview({
-      fileName: request.file.originalname,
-      rows: records,
-      mapping
-    });
-
-    response.json(payload);
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 app.post("/api/imports/:id/confirm", async (request, response, next) => {
   try {
     const requestedMapping = Array.isArray(request.body.mapping)
       ? (request.body.mapping as CsvImportMapping[])
-      : Array.isArray(request.body?.mapping)
-        ? (request.body.mapping as CsvImportMapping[])
-        : undefined;
+      : undefined;
 
     const payload = await confirmImport(request.params.id, requestedMapping);
     response.json(payload);
@@ -125,7 +108,10 @@ app.get("/api/imports", async (_request, response, next) => {
 app.get("/api/catalog-items", async (request, response, next) => {
   try {
     const items = await listCatalogItems({
-      supplier: typeof request.query.supplier === "string" ? request.query.supplier : undefined,
+      supplier:
+        typeof request.query.supplier === "string"
+          ? request.query.supplier
+          : undefined,
       catalogStatus:
         typeof request.query.catalogStatus === "string"
           ? request.query.catalogStatus
@@ -133,7 +119,7 @@ app.get("/api/catalog-items", async (request, response, next) => {
       normalizedCategory:
         typeof request.query.normalizedCategory === "string"
           ? request.query.normalizedCategory
-          : undefined
+          : undefined,
     });
 
     const payload: CatalogListResponse = { items };
@@ -163,21 +149,17 @@ app.use(
     if (error instanceof ApiError) {
       response.status(error.status).json({
         error: error.message,
-        details: error.details
+        details: error.details,
       });
       return;
     }
 
     if (error instanceof Error) {
-      response.status(500).json({
-        error: error.message
-      });
+      response.status(500).json({ error: error.message });
       return;
     }
 
-    response.status(500).json({
-      error: "Unexpected server error."
-    });
+    response.status(500).json({ error: "Unexpected server error." });
   }
 );
 
