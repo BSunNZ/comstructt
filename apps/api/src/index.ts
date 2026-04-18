@@ -1,8 +1,38 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import cors from "cors";
 import express from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
-import type { CsvUploadResponse, CsvRecordValue } from "@comstruct/shared";
+import type {
+  CatalogListResponse,
+  CsvImportMapping,
+  CsvImportPreviewResponse,
+  ErrorResponse,
+  ImportBatchListResponse,
+  UpdateCatalogItemInput
+} from "@comstruct/shared";
+import {
+  buildDefaultMapping,
+  sanitizeIncomingMapping,
+  validateColumns,
+  validateMapping
+} from "./lib/catalog.js";
+import {
+  ApiError,
+  confirmImport,
+  createCsvImportPreview,
+  listCatalogItems,
+  listImports,
+  updateCatalogItem
+} from "./lib/supabase.js";
+
+if (typeof process.loadEnvFile === "function") {
+  const envPath = join(process.cwd(), ".env");
+  if (existsSync(envPath)) {
+    process.loadEnvFile(envPath);
+  }
+}
 
 const app = express();
 const upload = multer({
@@ -19,41 +49,140 @@ app.get("/health", (_request, response) => {
   response.json({ ok: true });
 });
 
-app.post("/api/uploads/csv", upload.single("file"), (request, response) => {
-  if (!request.file) {
-    response.status(400).json({ error: "No CSV file was uploaded." });
-    return;
-  }
-
+app.post("/api/imports/csv", upload.single("file"), async (request, response, next) => {
   try {
+    if (!request.file) {
+      throw new ApiError(400, "No CSV file was uploaded.");
+    }
+
     const fileContent = request.file.buffer.toString("utf-8");
     const records = parse(fileContent, {
       columns: true,
       skip_empty_lines: true,
       trim: true
-    }) as Array<Record<string, CsvRecordValue>>;
+    }) as Array<Record<string, unknown>>;
+
+    if (records.length === 0) {
+      throw new ApiError(400, "The CSV file is empty.");
+    }
 
     const columns = Object.keys(records[0] ?? {});
-    const previewRows = records.slice(0, 5);
+    const missingColumns = validateColumns(columns);
 
-    const payload: CsvUploadResponse = {
+    if (missingColumns.length > 0) {
+      throw new ApiError(400, "The CSV file is missing required columns.", missingColumns);
+    }
+
+    const requestedMapping = Array.isArray(request.body.mapping)
+      ? (request.body.mapping as CsvImportMapping[])
+      : request.body.mapping
+        ? (JSON.parse(request.body.mapping as string) as CsvImportMapping[])
+        : undefined;
+
+    const mapping = sanitizeIncomingMapping(columns, requestedMapping ?? buildDefaultMapping(columns));
+    const mappingErrors = validateMapping(mapping, columns);
+
+    if (mappingErrors.length > 0) {
+      throw new ApiError(400, "The CSV mapping is invalid.", mappingErrors);
+    }
+
+    const payload: CsvImportPreviewResponse = await createCsvImportPreview({
       fileName: request.file.originalname,
-      totalRows: records.length,
-      columns,
-      previewRows
-    };
+      rows: records,
+      mapping
+    });
 
     response.json(payload);
   } catch (error) {
-    response.status(400).json({
-      error: error instanceof Error ? error.message : "The CSV file could not be parsed."
-    });
+    next(error);
   }
 });
+
+app.post("/api/imports/:id/confirm", async (request, response, next) => {
+  try {
+    const requestedMapping = Array.isArray(request.body.mapping)
+      ? (request.body.mapping as CsvImportMapping[])
+      : Array.isArray(request.body?.mapping)
+        ? (request.body.mapping as CsvImportMapping[])
+        : undefined;
+
+    const payload = await confirmImport(request.params.id, requestedMapping);
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/imports", async (_request, response, next) => {
+  try {
+    const payload: ImportBatchListResponse = await listImports();
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/catalog-items", async (request, response, next) => {
+  try {
+    const items = await listCatalogItems({
+      supplier: typeof request.query.supplier === "string" ? request.query.supplier : undefined,
+      catalogStatus:
+        typeof request.query.catalogStatus === "string"
+          ? request.query.catalogStatus
+          : undefined,
+      normalizedCategory:
+        typeof request.query.normalizedCategory === "string"
+          ? request.query.normalizedCategory
+          : undefined
+    });
+
+    const payload: CatalogListResponse = { items };
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/catalog-items/:id", async (request, response, next) => {
+  try {
+    const input = request.body as UpdateCatalogItemInput;
+    const item = await updateCatalogItem(request.params.id, input);
+    response.json(item);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.use(
+  (
+    error: unknown,
+    _request: express.Request,
+    response: express.Response<ErrorResponse>,
+    _next: express.NextFunction
+  ) => {
+    if (error instanceof ApiError) {
+      response.status(error.status).json({
+        error: error.message,
+        details: error.details
+      });
+      return;
+    }
+
+    if (error instanceof Error) {
+      response.status(500).json({
+        error: error.message
+      });
+      return;
+    }
+
+    response.status(500).json({
+      error: "Unexpected server error."
+    });
+  }
+);
 
 const port = Number(process.env.PORT ?? 4000);
 
 app.listen(port, () => {
   console.log(`Comstruct API listening on http://localhost:${port}`);
 });
-
