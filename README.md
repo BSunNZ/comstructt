@@ -31,8 +31,8 @@ Comstruct now includes a procurement-first MVP for importing supplier CSVs into 
    copy apps\api\.env.example apps\api\.env
    ```
 
-3. Apply `supabase/migrations/20260418_procurement_catalog_cleanup.sql` to your Supabase database.
-   This migration bootstraps the required tables for a fresh project and also upgrades older schemas.
+3. Apply all SQL files in `supabase/migrations` to your Supabase database in filename order.
+   `20260418_procurement_catalog_cleanup.sql` bootstraps the catalog schema, and `20260418_add_procurement_orders.sql` is required for the Orders workspace.
 
 4. Start both apps:
 

@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import type {
+  ApprovalRoute,
   CatalogItem,
   ConfirmImportResponse,
+  CreateProjectInput,
   CsvImportMapping,
   CsvImportPreviewResponse,
   DerivedFieldMapping,
@@ -12,8 +14,20 @@ import type {
   DatabaseTableName,
   ImportBatchListResponse,
   ImportBatchSummary,
+  NormalizedCategory,
+  ProjectPriceImportFieldTarget,
+  ProjectPriceImportMapping,
+  ProjectPriceImportPreviewResponse,
+  ProjectSummary,
+  ProcurementOrder,
+  ProcurementOrderActionInput,
+  ProcurementOrderCreateInput,
+  ProcurementOrderItem,
+  ProcurementOrderSettings,
+  ProcurementOrdersResponse,
   UpdateCatalogItemInput,
   UpdateDatabaseRowInput,
+  ConfirmProjectPriceImportResponse,
 } from "@comstruct/shared";
 import {
   assertCatalogStatus,
@@ -35,6 +49,12 @@ const SUPABASE_KEY =
 const db = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+const PROCUREMENT_ORDERS_MIGRATION = "supabase/migrations/20260418_add_procurement_orders.sql";
+const PROCUREMENT_ORDER_TABLES = new Set([
+  "procurement_order_settings",
+  "procurement_orders",
+  "procurement_order_items",
+]);
 
 export class ApiError extends Error {
   status: number;
@@ -72,6 +92,7 @@ interface DbSupplier {
   name: string;
   import_type: string | null;
   contract_active: boolean | null;
+  supplier_discount_pct: number | null;
   created_at: string;
 }
 
@@ -111,13 +132,58 @@ interface DbSupplierProductMapping {
   created_at: string;
 }
 
-const DATABASE_SCHEMA: DatabaseTableDefinition = {
-  name: "normalized_products",
-  label: "Normalized Products",
-  description: "Catalog-ready product records that procurement reviews and publishes.",
-  primaryKey: "id",
-  columns: [
-    { name: "id", label: "ID", type: "uuid", nullable: false, editable: false },
+interface DbOrder {
+  id: string;
+  user_id: string | null;
+  project_id: string | null;
+  total_price: number | null;
+  status: string;
+  created_at: string;
+  payment_term_id: string | null;
+  expected_delivery_days: number | null;
+  site_name: string | null;
+  ordered_by: string | null;
+  notes: string | null;
+  rejection_reason: string | null;
+  items: unknown;
+}
+
+interface DbOrderItem {
+  id: string;
+  order_id: string;
+  product_id: string | null;
+  unit_price: number;
+  quantity: number;
+  created_at: string;
+}
+
+interface DbProject {
+  id: string;
+  name: string;
+  city: string | null;
+  zip_code: string | null;
+  address: string | null;
+  min_approval: number | null;
+  created_at: string;
+}
+
+interface DbProjectSpecificPrice {
+  id: string;
+  project_id: string;
+  supplier_product_mapping_id: string;
+  project_price: number;
+  created_at: string;
+  updated_at: string;
+}
+
+const DATABASE_SCHEMAS: Record<DatabaseTableName, DatabaseTableDefinition> = {
+  normalized_products: {
+    name: "normalized_products",
+    label: "Normalized Products",
+    description: "Catalog-ready product records that procurement reviews and publishes.",
+    primaryKey: "id",
+    columns: [
+      { name: "id", label: "ID", type: "uuid", nullable: false, editable: false },
     {
       name: "category",
       label: "Category",
@@ -213,14 +279,81 @@ const DATABASE_SCHEMA: DatabaseTableDefinition = {
       nullable: true,
       editable: true,
     },
-    {
-      name: "created_at",
-      label: "Created At",
-      type: "datetime",
-      nullable: false,
-      editable: false,
-    },
-  ],
+      {
+        name: "created_at",
+        label: "Created At",
+        type: "datetime",
+        nullable: false,
+        editable: false,
+      },
+    ],
+  },
+  suppliers: {
+    name: "suppliers",
+    label: "Suppliers",
+    description: "Supplier master data used for catalog matching and discount management.",
+    primaryKey: "id",
+    columns: [
+      { name: "id", label: "ID", type: "uuid", nullable: false, editable: false },
+      { name: "name", label: "Name", type: "string", nullable: false, editable: true },
+      {
+        name: "import_type",
+        label: "Import Type",
+        type: "string",
+        nullable: true,
+        editable: true,
+      },
+      {
+        name: "contract_active",
+        label: "Contract Active",
+        type: "boolean",
+        nullable: true,
+        editable: true,
+      },
+      {
+        name: "supplier_discount_pct",
+        label: "Supplier Discount %",
+        type: "number",
+        nullable: true,
+        editable: true,
+      },
+      {
+        name: "created_at",
+        label: "Created At",
+        type: "datetime",
+        nullable: false,
+        editable: false,
+      },
+    ],
+  },
+  projects: {
+    name: "projects",
+    label: "Projects",
+    description:
+      "Project master data used for delivery locations, approval thresholds, and special price imports.",
+    primaryKey: "id",
+    columns: [
+      { name: "id", label: "ID", type: "uuid", nullable: false, editable: false },
+      { name: "name", label: "Name", type: "string", nullable: false, editable: true },
+      { name: "city", label: "City", type: "string", nullable: true, editable: true },
+      { name: "zip_code", label: "ZIP Code", type: "string", nullable: true, editable: true },
+      { name: "address", label: "Address", type: "string", nullable: true, editable: true },
+      {
+        name: "min_approval",
+        label: "Min Approval",
+        type: "number",
+        nullable: true,
+        editable: true,
+      },
+      {
+        name: "created_at",
+        label: "Created At",
+        type: "datetime",
+        nullable: false,
+        editable: false,
+      },
+    ],
+  },
 };
 
 async function run<T>(
@@ -243,6 +376,27 @@ function getMissingSchemaColumn(error: unknown, tableName: string): string | nul
 
   const [, columnName, errorTableName] = match;
   return errorTableName === tableName ? columnName : null;
+}
+
+function getMissingSchemaTable(error: unknown): string | null {
+  if (!(error instanceof ApiError)) {
+    return null;
+  }
+
+  const match = error.message.match(/Could not find the table 'public\.([^']+)' in the schema cache/);
+  return match?.[1] ?? null;
+}
+
+function rethrowMissingProcurementOrderSchema(error: unknown): never {
+  const missingTable = getMissingSchemaTable(error);
+  if (!missingTable || !PROCUREMENT_ORDER_TABLES.has(missingTable)) {
+    throw error;
+  }
+
+  throw new ApiError(
+    503,
+    `Orders are unavailable because the database is missing "${missingTable}". Apply ${PROCUREMENT_ORDERS_MIGRATION} to the Supabase project at ${SUPABASE_URL}.`
+  );
 }
 
 async function insertWithSchemaFallback<T extends object>(
@@ -274,8 +428,8 @@ async function insertWithSchemaFallback<T extends object>(
 }
 
 function getDatabaseTableDefinition(tableName: string): DatabaseTableDefinition {
-  if (tableName === DATABASE_SCHEMA.name) {
-    return DATABASE_SCHEMA;
+  if (tableName in DATABASE_SCHEMAS) {
+    return DATABASE_SCHEMAS[tableName as DatabaseTableName];
   }
 
   throw new ApiError(404, `Unsupported database table "${tableName}".`);
@@ -453,6 +607,7 @@ function toCatalogItem(
     displayName: product.product_name,
     sourceCategory,
     normalizedCategory: assertNormalizedCategory(product.category),
+    subcategory: product.subcategory ?? "",
     unit: product.unit ?? "",
     unitPrice: mapping.contract_price ?? 0,
     consumptionType: product.consumption_type ?? "",
@@ -462,6 +617,246 @@ function toCatalogItem(
     catalogStatus: assertCatalogStatus(catalogStatus),
     isCMaterial,
     createdAt: product.created_at,
+  };
+}
+
+function assertApprovalRoute(value: string): ApprovalRoute {
+  if (
+    value === "auto_approve" ||
+    value === "project_manager" ||
+    value === "central_procurement"
+  ) {
+    return value;
+  }
+
+  throw new ApiError(500, `Unsupported approval route "${value}".`);
+}
+
+const DEFAULT_PROCUREMENT_ORDER_SETTINGS: ProcurementOrderSettings = {
+  autoApproveBelow: 200,
+  centralProcurementCategories: ["Electrical", "Consumables"],
+};
+
+let procurementOrderSettingsState: ProcurementOrderSettings = {
+  ...DEFAULT_PROCUREMENT_ORDER_SETTINGS,
+};
+
+function sanitizeOrderCategories(categories: unknown): NormalizedCategory[] {
+  return Array.isArray(categories)
+    ? categories.filter(
+        (value): value is NormalizedCategory =>
+          value === "Fasteners" ||
+          value === "Electrical" ||
+          value === "PPE" ||
+          value === "Consumables" ||
+          value === "Tools" ||
+          value === "Site Supplies" ||
+          value === "Other"
+      )
+    : [];
+}
+
+function normalizeOrderSettings(input: ProcurementOrderSettings): ProcurementOrderSettings {
+  return {
+    autoApproveBelow:
+      Number.isFinite(input.autoApproveBelow) && input.autoApproveBelow >= 0
+        ? input.autoApproveBelow
+        : DEFAULT_PROCUREMENT_ORDER_SETTINGS.autoApproveBelow,
+    centralProcurementCategories: sanitizeOrderCategories(input.centralProcurementCategories),
+  };
+}
+
+async function ensureProcurementOrderSettings(): Promise<ProcurementOrderSettings> {
+  return { ...procurementOrderSettingsState };
+}
+
+function coerceNormalizedCategory(value: string | null | undefined): NormalizedCategory {
+  if (!value) {
+    return "Other";
+  }
+
+  try {
+    return assertNormalizedCategory(value);
+  } catch {
+    return "Other";
+  }
+}
+
+function normalizeOrderStatus(value: string): ProcurementOrder["status"] {
+  if (
+    value === "draft" ||
+    value === "pending_approval" ||
+    value === "approved" ||
+    value === "ordered" ||
+    value === "delivered" ||
+    value === "rejected"
+  ) {
+    return value;
+  }
+
+  if (value === "requested") {
+    return "pending_approval";
+  }
+
+  return "draft";
+}
+
+function appendOrderNotes(reason: string, notes: string | null | undefined): string {
+  const trimmedNotes = notes?.trim();
+  if (!trimmedNotes) {
+    return reason;
+  }
+
+  return `${reason} ${trimmedNotes}`;
+}
+
+function routeOrderForApproval(
+  settings: ProcurementOrderSettings,
+  totalAmount: number,
+  categories: NormalizedCategory[],
+  project: DbProject | null
+): {
+  status: ProcurementOrder["status"];
+  route: ApprovalRoute;
+  reason: string;
+  approvedAt: string | null;
+  submittedAt: string;
+} {
+  const now = new Date().toISOString();
+  const requiresCentralProcurement = categories.some((category) =>
+    settings.centralProcurementCategories.includes(category)
+  );
+
+  if (requiresCentralProcurement) {
+    return {
+      status: "pending_approval",
+      route: "central_procurement",
+      reason: "Contains product groups that require central procurement review.",
+      approvedAt: null,
+      submittedAt: now,
+    };
+  }
+
+  return {
+    status: "pending_approval",
+    route: "project_manager",
+    reason: project?.name
+      ? `Sent to the project manager for approval on project "${project.name}".`
+      : `Sent to the project manager for approval.`,
+    approvedAt: null,
+    submittedAt: now,
+  };
+}
+
+function toProcurementOrder(
+  order: DbOrder,
+  items: DbOrderItem[],
+  project: DbProject | null,
+  productsById: Map<string, DbNormalizedProduct>,
+  settings: ProcurementOrderSettings
+): ProcurementOrder {
+  const normalizedItems = items.map((item): ProcurementOrderItem => {
+    const product = item.product_id ? productsById.get(item.product_id) : undefined;
+    const unitPrice = item.unit_price ?? 0;
+    const quantity = item.quantity ?? 0;
+
+    return {
+      id: item.id,
+      productId: item.product_id ?? "",
+      displayName:
+        product?.product_name ?? product?.source_name ?? `Item ${item.id.slice(0, 8)}`,
+      normalizedCategory: coerceNormalizedCategory(product?.category),
+      unit: product?.unit ?? "",
+      unitPrice,
+      quantity,
+      supplierName: "",
+      lineTotal: unitPrice * quantity,
+    };
+  });
+
+  const totalAmount =
+    typeof order.total_price === "number"
+      ? order.total_price
+      : normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const categories = normalizedItems.map((item) => item.normalizedCategory);
+  const status = normalizeOrderStatus(order.status);
+  const requiresCentralProcurement = categories.some((category) =>
+    settings.centralProcurementCategories.includes(category)
+  );
+  const routed = routeOrderForApproval(settings, totalAmount, categories, project);
+
+  let approvalRoute: ApprovalRoute = requiresCentralProcurement
+    ? "central_procurement"
+    : "project_manager";
+  let approvalReason = appendOrderNotes("Draft order not submitted yet.", order.notes);
+  let submittedAt: string | null = null;
+  let approvedAt: string | null = null;
+  let orderedAt: string | null = null;
+  let deliveredAt: string | null = null;
+
+  if (status === "pending_approval") {
+    approvalRoute = requiresCentralProcurement ? "central_procurement" : "project_manager";
+    approvalReason = appendOrderNotes(
+      requiresCentralProcurement
+        ? "Contains product groups that require central procurement review."
+        : "Awaiting approval.",
+      order.notes
+    );
+    submittedAt = order.created_at;
+  }
+
+  if (status === "approved") {
+    approvalRoute = requiresCentralProcurement ? "central_procurement" : "project_manager";
+    approvalReason = appendOrderNotes("Approved for ordering.", order.notes);
+    submittedAt = order.created_at;
+    approvedAt = order.created_at;
+  }
+
+  if (status === "ordered") {
+    approvalRoute = requiresCentralProcurement ? "central_procurement" : "project_manager";
+    approvalReason = appendOrderNotes("Order has been placed with the supplier.", order.notes);
+    submittedAt = order.created_at;
+    approvedAt = order.created_at;
+    orderedAt = order.created_at;
+  }
+
+  if (status === "delivered") {
+    approvalRoute = requiresCentralProcurement ? "central_procurement" : "project_manager";
+    approvalReason = appendOrderNotes("Order has been delivered to site.", order.notes);
+    submittedAt = order.created_at;
+    approvedAt = order.created_at;
+    orderedAt = order.created_at;
+    deliveredAt = order.created_at;
+  }
+
+  if (status === "rejected") {
+    approvalRoute = requiresCentralProcurement ? "central_procurement" : "project_manager";
+    approvalReason = appendOrderNotes(
+      order.rejection_reason?.trim()
+        ? `Order was declined. Reason: ${order.rejection_reason.trim()}`
+        : "Order was declined.",
+      order.notes
+    );
+    submittedAt = order.created_at;
+  }
+
+  return {
+    id: order.id,
+    projectId: order.project_id ?? null,
+    projectName: project?.name ?? order.site_name?.trim() ?? "Unnamed project",
+    foremanName: order.ordered_by?.trim() || "Unknown requester",
+    status,
+    approvalRoute,
+    approvalReason,
+    rejectionReason: order.rejection_reason?.trim() || null,
+    totalAmount,
+    currency: "CHF",
+    createdAt: order.created_at,
+    submittedAt,
+    approvedAt,
+    orderedAt,
+    deliveredAt,
+    items: normalizedItems,
   };
 }
 
@@ -495,12 +890,461 @@ async function ensureSupplier(name: string): Promise<DbSupplier> {
   return supplier;
 }
 
+function toProjectSummary(project: DbProject): ProjectSummary {
+  return {
+    id: project.id,
+    name: project.name,
+    city: project.city ?? null,
+    zipCode: project.zip_code ?? null,
+    address: project.address ?? null,
+    minApproval: project.min_approval ?? null,
+    createdAt: project.created_at,
+  };
+}
+
+function normalizeOptionalProjectText(value: string | undefined): string | null {
+  const trimmedValue = value?.trim();
+  return trimmedValue ? trimmedValue : null;
+}
+
+function normalizeLoose(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function buildDefaultProjectPriceMapping(
+  columns: string[]
+): ProjectPriceImportMapping[] {
+  const headerAliases: Array<{
+    target: ProjectPriceImportFieldTarget;
+    aliases: string[];
+  }> = [
+    {
+      target: "supplierSku",
+      aliases: [
+        "supplier_sku",
+        "supplier sku",
+        "sku",
+        "artikel_id",
+        "article id",
+        "material number",
+      ],
+    },
+    {
+      target: "supplierName",
+      aliases: ["supplier_name", "supplier name", "supplier", "vendor", "lieferant"],
+    },
+    {
+      target: "projectPrice",
+      aliases: [
+        "project_price",
+        "project price",
+        "special_price",
+        "special price",
+        "price",
+        "unit_price",
+        "unit price",
+        "net price",
+      ],
+    },
+  ];
+
+  return columns.map((column) => {
+    const normalizedColumn = normalizeLoose(column);
+    const matched = headerAliases.find((entry) =>
+      entry.aliases.some((alias) => normalizeLoose(alias) === normalizedColumn)
+    );
+
+    return {
+      sourceColumn: column,
+      target: matched?.target ?? "ignore",
+    };
+  });
+}
+
+function sanitizeIncomingProjectPriceMapping(
+  columns: string[],
+  mapping?: ProjectPriceImportMapping[]
+): ProjectPriceImportMapping[] {
+  if (!mapping || mapping.length === 0) {
+    return buildDefaultProjectPriceMapping(columns);
+  }
+
+  const validTargets = new Set<string>([
+    "supplierSku",
+    "supplierName",
+    "projectPrice",
+    "ignore",
+  ]);
+
+  return columns.map((column) => {
+    const match = mapping.find((entry) => entry.sourceColumn === column);
+    return {
+      sourceColumn: column,
+      target:
+        match && validTargets.has(match.target)
+          ? match.target
+          : "ignore",
+    };
+  });
+}
+
+function parseImportedPrice(value: string): number {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error("Price is required.");
+  }
+
+  const european = normalized.replace(/\./g, "").replace(",", ".");
+  const direct = normalized.replace(",", ".");
+  const parsed = Number(normalized.includes(",") && !normalized.includes(".") ? direct : european);
+  const fallback = Number(direct);
+  const result = Number.isFinite(parsed) ? parsed : fallback;
+
+  if (!Number.isFinite(result)) {
+    throw new Error(`Invalid price "${value}".`);
+  }
+
+  return result;
+}
+
+type ParsedProjectPriceImportRow = {
+  rowNumber: number;
+  supplierSku: string;
+  supplierName: string;
+  projectPrice: number | null;
+  validationError: string | null;
+};
+
+type ResolvedProjectPriceImportRow = {
+  rowNumber: number;
+  supplierSku: string;
+  supplierName: string;
+  productName: string;
+  currentContractPrice: number | null;
+  projectPrice: number | null;
+  matched: boolean;
+  reason: string;
+  mappingId: string | null;
+};
+
+function parseProjectPriceImportRows(
+  rows: Record<string, unknown>[],
+  mapping: ProjectPriceImportMapping[]
+): ParsedProjectPriceImportRow[] {
+  const sourceColumnByTarget = new Map<ProjectPriceImportFieldTarget, string>();
+
+  for (const entry of mapping) {
+    if (entry.target !== "ignore" && !sourceColumnByTarget.has(entry.target)) {
+      sourceColumnByTarget.set(entry.target, entry.sourceColumn);
+    }
+  }
+
+  return rows.map((row, index) => {
+    const supplierSku = String(row[sourceColumnByTarget.get("supplierSku") ?? ""] ?? "").trim();
+    const supplierName = String(row[sourceColumnByTarget.get("supplierName") ?? ""] ?? "").trim();
+    const priceRaw = String(row[sourceColumnByTarget.get("projectPrice") ?? ""] ?? "").trim();
+
+    let projectPrice: number | null = null;
+    let validationError: string | null = null;
+
+    if (!sourceColumnByTarget.get("projectPrice")) {
+      validationError = "Map one column to project price.";
+    } else if (!supplierSku) {
+      validationError = "Map and fill supplier_sku.";
+    } else if (!supplierName) {
+      validationError = "Map and fill supplier_name.";
+    } else if (!priceRaw) {
+      validationError = "No project price column value found.";
+    } else {
+      try {
+        projectPrice = parseImportedPrice(priceRaw);
+      } catch (error) {
+        validationError = error instanceof Error ? error.message : "Invalid project price.";
+      }
+    }
+
+    return {
+      rowNumber: index + 1,
+      supplierSku,
+      supplierName,
+      projectPrice,
+      validationError,
+    };
+  });
+}
+
+async function getProjectById(projectId: string): Promise<DbProject> {
+  const rows = await run<DbProject[]>(db.from("projects").select("*").eq("id", projectId).limit(1));
+  if (!rows[0]) {
+    throw new ApiError(404, "Project not found.");
+  }
+  return rows[0];
+}
+
+async function findProjectByName(name: string): Promise<DbProject | null> {
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    return null;
+  }
+
+  const rows = await run<DbProject[]>(db.from("projects").select("*").eq("name", trimmedName).limit(1));
+  return rows[0] ?? null;
+}
+
+async function resolveProjectPriceImportRows(
+  rows: Record<string, unknown>[],
+  mapping: ProjectPriceImportMapping[]
+): Promise<ResolvedProjectPriceImportRow[]> {
+  const parsedRows = parseProjectPriceImportRows(rows, mapping);
+  const supplierNames = Array.from(
+    new Set(parsedRows.map((row) => row.supplierName).filter(Boolean))
+  );
+  const supplierSkus = Array.from(
+    new Set(parsedRows.map((row) => row.supplierSku).filter(Boolean))
+  );
+  const suppliers =
+    supplierNames.length > 0
+      ? await run<DbSupplier[]>(db.from("suppliers").select("*").in("name", supplierNames))
+      : [];
+  const supplierByNormalizedName = new Map(
+    suppliers.map((supplier) => [normalizeLoose(supplier.name), supplier])
+  );
+  const supplierIds = suppliers.map((supplier) => supplier.id);
+
+  const mappings =
+    supplierSkus.length > 0 && supplierIds.length > 0
+      ? await run<DbSupplierProductMapping[]>(
+          db
+            .from("supplier_product_mapping")
+            .select("*")
+            .in("supplier_sku", supplierSkus)
+            .in("supplier_id", supplierIds)
+        )
+      : [];
+  const mappingBySupplierAndSku = new Map<string, DbSupplierProductMapping>();
+  for (const mappingRow of mappings) {
+    if (!mappingRow.supplier_sku) {
+      continue;
+    }
+    mappingBySupplierAndSku.set(
+      `${mappingRow.supplier_id}::${mappingRow.supplier_sku.trim()}`,
+      mappingRow
+    );
+  }
+  const productIds = Array.from(new Set(mappings.map((row) => row.product_id).filter(Boolean)));
+  const products =
+    productIds.length > 0
+      ? await run<DbNormalizedProduct[]>(
+          db.from("normalized_products").select("*").in("id", productIds)
+        )
+      : [];
+  const productById = new Map(products.map((product) => [product.id, product]));
+
+  return parsedRows.map((row) => {
+    if (row.validationError) {
+      return {
+        rowNumber: row.rowNumber,
+        supplierSku: row.supplierSku,
+        supplierName: row.supplierName,
+        productName: "",
+        currentContractPrice: null,
+        projectPrice: row.projectPrice,
+        matched: false,
+        reason: row.validationError,
+        mappingId: null,
+      };
+    }
+    const supplier = supplierByNormalizedName.get(normalizeLoose(row.supplierName));
+    if (!supplier) {
+      return {
+        rowNumber: row.rowNumber,
+        supplierSku: row.supplierSku,
+        supplierName: row.supplierName,
+        productName: "",
+        currentContractPrice: null,
+        projectPrice: row.projectPrice,
+        matched: false,
+        reason: "Supplier not found.",
+        mappingId: null,
+      };
+    }
+    const mappingMatch = mappingBySupplierAndSku.get(`${supplier.id}::${row.supplierSku}`);
+    if (!mappingMatch) {
+      return {
+        rowNumber: row.rowNumber,
+        supplierSku: row.supplierSku,
+        supplierName: supplier.name,
+        productName: "",
+        currentContractPrice: null,
+        projectPrice: row.projectPrice,
+        matched: false,
+        reason: "Supplier SKU not found for this supplier.",
+        mappingId: null,
+      };
+    }
+    const product = productById.get(mappingMatch.product_id);
+
+    return {
+      rowNumber: row.rowNumber,
+      supplierSku: mappingMatch.supplier_sku ?? row.supplierSku,
+      supplierName: supplier.name,
+      productName: product?.product_name ?? "",
+      currentContractPrice: mappingMatch.contract_price,
+      projectPrice: row.projectPrice,
+      matched: true,
+      reason: "Matched by supplier name and supplier SKU.",
+      mappingId: mappingMatch.id,
+    };
+  });
+}
+
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const projects = await run<DbProject[]>(
+    db.from("projects").select("*").order("name", { ascending: true })
+  );
+
+  return projects.map(toProjectSummary);
+}
+
+export async function createProject(input: CreateProjectInput): Promise<ProjectSummary> {
+  const trimmedName = input.name.trim();
+  if (!trimmedName) {
+    throw new ApiError(400, "Project name is required.");
+  }
+
+  const existing = await run<DbProject[]>(
+    db.from("projects").select("*").eq("name", trimmedName).limit(1)
+  );
+  if (existing[0]) {
+    return toProjectSummary(existing[0]);
+  }
+
+  const projectId = randomUUID();
+  const createdAt = new Date().toISOString();
+  await insertWithSchemaFallback(
+    "projects",
+    [
+      {
+        id: projectId,
+        name: trimmedName,
+        city: normalizeOptionalProjectText(input.city),
+        zip_code: normalizeOptionalProjectText(input.zipCode),
+        address: normalizeOptionalProjectText(input.address),
+        created_at: createdAt,
+      },
+    ],
+    ["city", "zip_code", "address"]
+  );
+  const created = await run<DbProject[]>(
+    db.from("projects").select("*").eq("id", projectId).limit(1)
+  );
+
+  if (!created[0]) {
+    throw new ApiError(500, "Failed to create project.");
+  }
+
+  return toProjectSummary(created[0]);
+}
+
+export async function previewProjectPriceImport(input: {
+  projectId: string;
+  rows: Record<string, unknown>[];
+  mapping?: ProjectPriceImportMapping[];
+}): Promise<ProjectPriceImportPreviewResponse> {
+  const project = await getProjectById(input.projectId);
+  const mapping = sanitizeIncomingProjectPriceMapping(
+    Object.keys(input.rows[0] ?? {}),
+    input.mapping
+  );
+  const resolvedRows = await resolveProjectPriceImportRows(input.rows, mapping);
+
+  return {
+    project: toProjectSummary(project),
+    mapping,
+    totalRows: resolvedRows.length,
+    matchedRows: resolvedRows.filter((row) => row.matched).length,
+    unmatchedRows: resolvedRows.filter((row) => !row.matched).length,
+    sampleRows: input.rows.slice(0, 5).map((row) => toStringRecord(row)),
+    rows: resolvedRows.map(({ mappingId: _mappingId, matched, ...row }) => ({
+      ...row,
+      status: matched ? "matched" : "unmatched",
+    })),
+  };
+}
+
+export async function confirmProjectPriceImport(input: {
+  projectId: string;
+  rows: Record<string, unknown>[];
+  mapping?: ProjectPriceImportMapping[];
+}): Promise<ConfirmProjectPriceImportResponse> {
+  const project = await getProjectById(input.projectId);
+  const mapping = sanitizeIncomingProjectPriceMapping(
+    Object.keys(input.rows[0] ?? {}),
+    input.mapping
+  );
+  const resolvedRows = await resolveProjectPriceImportRows(input.rows, mapping);
+  const now = new Date().toISOString();
+  const matchedRows = resolvedRows.filter(
+    (row): row is ResolvedProjectPriceImportRow & { mappingId: string; projectPrice: number } =>
+      row.matched && Boolean(row.mappingId) && typeof row.projectPrice === "number"
+  );
+
+  if (matchedRows.length > 0) {
+    const mappingIds = matchedRows.map((row) => row.mappingId);
+    const existingRows = await run<DbProjectSpecificPrice[]>(
+      db
+        .from("project_specific_prices")
+        .select("*")
+        .eq("project_id", project.id)
+        .in("supplier_product_mapping_id", mappingIds)
+    );
+
+    const existingByMappingId = new Map(
+      existingRows.map((row) => [row.supplier_product_mapping_id, row])
+    );
+    const inserts: Array<Record<string, unknown>> = [];
+
+    for (const row of matchedRows) {
+      const existing = existingByMappingId.get(row.mappingId);
+      if (existing) {
+        await run(
+          db
+            .from("project_specific_prices")
+            .update({
+              project_price: row.projectPrice,
+              updated_at: now,
+            })
+            .eq("id", existing.id)
+        );
+      } else {
+        inserts.push({
+          id: randomUUID(),
+          project_id: project.id,
+          supplier_product_mapping_id: row.mappingId,
+          project_price: row.projectPrice,
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    }
+
+    if (inserts.length > 0) {
+      await run(db.from("project_specific_prices").insert(inserts));
+    }
+  }
+
+  return {
+    project: toProjectSummary(project),
+    importedPrices: matchedRows.length,
+    unmatchedRows: resolvedRows.length - matchedRows.length,
+  };
+}
+
 export async function createCsvImportPreview(input: {
   fileName: string;
   rows: Record<string, unknown>[];
   mapping?: CsvImportMapping[];
   derivedMapping?: DerivedFieldMapping[];
-  customCategories?: string;
 }): Promise<CsvImportPreviewResponse> {
   const columns = [...Object.keys(input.rows[0] ?? {}), "AI Subcategory (Preview)"];
   const mapping = sanitizeIncomingMapping(columns, input.mapping);
@@ -590,8 +1434,7 @@ export async function createCsvImportPreview(input: {
         const preview = buildPreviewRow(stringRow, mapping);
         const enriched = await enrichProductRowWithLLM(
           preview.sourceName,
-          preview.sourceCategory,
-          input.customCategories
+          preview.sourceCategory
         );
 
         return {
@@ -633,8 +1476,7 @@ export async function listImports(): Promise<ImportBatchListResponse> {
 export async function confirmImport(
   importId: string,
   requestedMapping?: CsvImportMapping[],
-  requestedDerivedMapping?: DerivedFieldMapping[],
-  customCategories?: string
+  requestedDerivedMapping?: DerivedFieldMapping[]
 ): Promise<ConfirmImportResponse> {
   const importRows = await run<DbImport[]>(
     db.from("raw_imports").select("*").eq("id", importId).limit(1)
@@ -688,8 +1530,7 @@ export async function confirmImport(
 
     const enriched = await enrichProductRowWithLLM(
       preview.sourceName,
-      preview.sourceCategory,
-      customCategories
+      preview.sourceCategory
     );
     const identity = normalizeProductIdentity(preview.sourceName, {
       familyName: preview.familyName,
@@ -964,8 +1805,241 @@ export async function updateCatalogItem(
   return updated;
 }
 
+export async function listProcurementOrders(): Promise<ProcurementOrdersResponse> {
+  const settings = await ensureProcurementOrderSettings();
+  const orders = await run<DbOrder[]>(db.from("orders").select("*").order("created_at", { ascending: false }));
+
+  if (orders.length === 0) {
+    return { settings, orders: [] };
+  }
+
+  const orderIds = orders.map((order) => order.id);
+  const items = await run<DbOrderItem[]>(db.from("order_items").select("*").in("order_id", orderIds));
+  const itemsByOrderId = new Map<string, DbOrderItem[]>();
+  for (const item of items) {
+    const current = itemsByOrderId.get(item.order_id) ?? [];
+    current.push(item);
+    itemsByOrderId.set(item.order_id, current);
+  }
+  const projectIds = Array.from(
+    new Set(orders.map((order) => order.project_id).filter((value): value is string => Boolean(value)))
+  );
+  const productIds = Array.from(
+    new Set(items.map((item) => item.product_id).filter((value): value is string => Boolean(value)))
+  );
+  const [projects, products] = await Promise.all([
+    projectIds.length > 0
+      ? run<DbProject[]>(db.from("projects").select("*").in("id", projectIds))
+      : Promise.resolve([] as DbProject[]),
+    productIds.length > 0
+      ? run<DbNormalizedProduct[]>(db.from("normalized_products").select("*").in("id", productIds))
+      : Promise.resolve([] as DbNormalizedProduct[]),
+  ]);
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  const productsById = new Map(products.map((product) => [product.id, product]));
+
+  return {
+    settings,
+    orders: orders.map((order) =>
+      toProcurementOrder(
+        order,
+        itemsByOrderId.get(order.id) ?? [],
+        order.project_id ? projectsById.get(order.project_id) ?? null : null,
+        productsById,
+        settings
+      )
+    ),
+  };
+}
+
+export async function updateProcurementOrderSettings(
+  input: ProcurementOrderSettings
+): Promise<ProcurementOrderSettings> {
+  procurementOrderSettingsState = normalizeOrderSettings(input);
+  return { ...procurementOrderSettingsState };
+}
+
+export async function createProcurementOrder(
+  input: ProcurementOrderCreateInput
+): Promise<ProcurementOrder> {
+  const requestedProjectId = input.projectId?.trim() ?? "";
+  const requestedProjectName = input.projectName.trim();
+  let project: DbProject | null = null;
+
+  if (requestedProjectId) {
+    project = await getProjectById(requestedProjectId);
+  } else if (requestedProjectName) {
+    project = await findProjectByName(requestedProjectName);
+  }
+
+  const projectName = project?.name ?? requestedProjectName;
+
+  if (!projectName) {
+    throw new ApiError(400, "Project name is required.");
+  }
+
+  if (!input.foremanName.trim()) {
+    throw new ApiError(400, "Foreman name is required.");
+  }
+
+  if (!Array.isArray(input.items) || input.items.length === 0) {
+    throw new ApiError(400, "Add at least one item to the order.");
+  }
+
+  const totalAmount = input.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const now = new Date().toISOString();
+  const orderId = randomUUID();
+
+  await insertWithSchemaFallback(
+    "orders",
+    [
+      {
+        id: orderId,
+        project_id: project?.id ?? null,
+        total_price: totalAmount,
+        status: "draft",
+        created_at: now,
+        payment_term_id: null,
+        expected_delivery_days: null,
+        site_name: projectName,
+        ordered_by: input.foremanName.trim(),
+        notes: null,
+        items: [],
+      },
+    ],
+    ["project_id"]
+  );
+  const insertedOrders = await run<DbOrder[]>(
+    db.from("orders").select("*").eq("id", orderId).limit(1)
+  );
+
+  if (!insertedOrders[0]) {
+    throw new ApiError(500, "Failed to create procurement order.");
+  }
+
+  const itemRows = input.items.map((item) => ({
+    id: randomUUID(),
+    order_id: orderId,
+    product_id: item.productId || null,
+    unit_price: item.unitPrice,
+    quantity: item.quantity,
+    created_at: now,
+  }));
+
+  await run(db.from("order_items").insert(itemRows));
+
+  const productIds = Array.from(
+    new Set(itemRows.map((item) => item.product_id).filter((value): value is string => Boolean(value)))
+  );
+  const products =
+    productIds.length > 0
+      ? await run<DbNormalizedProduct[]>(db.from("normalized_products").select("*").in("id", productIds))
+      : [];
+  const productsById = new Map(products.map((product) => [product.id, product]));
+
+  return toProcurementOrder(insertedOrders[0], itemRows, project, productsById, await ensureProcurementOrderSettings());
+}
+
+export async function updateProcurementOrderStatus(
+  orderId: string,
+  input: ProcurementOrderActionInput
+): Promise<ProcurementOrder> {
+  const orders = await run<DbOrder[]>(db.from("orders").select("*").eq("id", orderId).limit(1));
+  const order = orders[0];
+  if (!order) {
+    throw new ApiError(404, "Procurement order not found.");
+  }
+
+  const itemRows = await run<DbOrderItem[]>(db.from("order_items").select("*").eq("order_id", orderId));
+  const settings = await ensureProcurementOrderSettings();
+  const productIds = Array.from(
+    new Set(itemRows.map((item) => item.product_id).filter((value): value is string => Boolean(value)))
+  );
+  const products =
+    productIds.length > 0
+      ? await run<DbNormalizedProduct[]>(db.from("normalized_products").select("*").in("id", productIds))
+      : [];
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const categories = itemRows.map((item) =>
+    coerceNormalizedCategory(item.product_id ? productsById.get(item.product_id)?.category : null)
+  );
+  const totalAmount =
+    typeof order.total_price === "number"
+      ? order.total_price
+      : itemRows.reduce((sum, item) => sum + item.unit_price * item.quantity, 0);
+  const project =
+    order.project_id
+      ? await getProjectById(order.project_id)
+      : order.site_name
+        ? await findProjectByName(order.site_name)
+        : null;
+  const patch: Partial<DbOrder> = {};
+  const currentStatus = normalizeOrderStatus(order.status);
+  const rejectionReason = input.rejectionReason?.trim() ?? "";
+
+  if (input.action === "submit") {
+    if (currentStatus !== "draft") {
+      throw new ApiError(409, "Only draft orders can be submitted.");
+    }
+
+    const routed = routeOrderForApproval(settings, totalAmount, categories, project);
+    patch.status = routed.status;
+    patch.rejection_reason = null;
+  }
+
+  if (input.action === "approve") {
+    if (currentStatus !== "pending_approval") {
+      throw new ApiError(409, "Only pending orders can be approved.");
+    }
+
+    patch.status = "approved";
+    patch.rejection_reason = null;
+  }
+
+  if (input.action === "reject") {
+    if (currentStatus !== "pending_approval") {
+      throw new ApiError(409, "Only pending orders can be rejected.");
+    }
+
+    if (!rejectionReason) {
+      throw new ApiError(400, "A rejection reason is required.");
+    }
+
+    patch.status = "rejected";
+    patch.rejection_reason = rejectionReason;
+  }
+
+  if (input.action === "mark_ordered") {
+    if (currentStatus !== "approved") {
+      throw new ApiError(409, "Only approved orders can be marked as ordered.");
+    }
+
+    patch.status = "ordered";
+    patch.rejection_reason = null;
+  }
+
+  if (input.action === "mark_delivered") {
+    if (currentStatus !== "ordered") {
+      throw new ApiError(409, "Only ordered items can be marked as delivered.");
+    }
+
+    patch.status = "delivered";
+    patch.rejection_reason = null;
+  }
+
+  const updatedRows = await run<DbOrder[]>(
+    db.from("orders").update(patch).eq("id", orderId).select("*").limit(1)
+  );
+
+  if (!updatedRows[0]) {
+    throw new ApiError(500, "The procurement order was updated but could not be reloaded.");
+  }
+
+  return toProcurementOrder(updatedRows[0], itemRows, project, productsById, settings);
+}
+
 export function listDatabaseTables(): DatabaseTableDefinition[] {
-  return [DATABASE_SCHEMA];
+  return Object.values(DATABASE_SCHEMAS);
 }
 
 export async function listDatabaseRows(tableName: string): Promise<{

@@ -14,6 +14,25 @@ export const CATALOG_STATUSES = ["imported", "published", "excluded"] as const;
 
 export type CatalogStatus = (typeof CATALOG_STATUSES)[number];
 
+export const ORDER_STATUSES = [
+  "draft",
+  "pending_approval",
+  "approved",
+  "ordered",
+  "delivered",
+  "rejected",
+] as const;
+
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export const APPROVAL_ROUTES = [
+  "auto_approve",
+  "project_manager",
+  "central_procurement",
+] as const;
+
+export type ApprovalRoute = (typeof APPROVAL_ROUTES)[number];
+
 export const IMPORT_BATCH_STATUSES = ["draft", "confirmed"] as const;
 
 export type ImportBatchStatus = (typeof IMPORT_BATCH_STATUSES)[number];
@@ -137,6 +156,68 @@ export interface ConfirmImportResponse {
   importedItems: number;
 }
 
+export const PROJECT_PRICE_IMPORT_TARGETS = [
+  "supplierSku",
+  "supplierName",
+  "projectPrice",
+] as const;
+
+export type ProjectPriceImportFieldTarget =
+  (typeof PROJECT_PRICE_IMPORT_TARGETS)[number];
+
+export interface ProjectPriceImportMapping {
+  sourceColumn: string;
+  target: ProjectPriceImportFieldTarget | "ignore";
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  city: string | null;
+  zipCode: string | null;
+  address: string | null;
+  minApproval: number | null;
+  createdAt: string;
+}
+
+export interface ProjectsListResponse {
+  projects: ProjectSummary[];
+}
+
+export interface CreateProjectInput {
+  name: string;
+  city?: string;
+  zipCode?: string;
+  address?: string;
+}
+
+export interface ProjectPriceImportPreviewRow {
+  rowNumber: number;
+  supplierSku: string;
+  supplierName: string;
+  productName: string;
+  currentContractPrice: number | null;
+  projectPrice: number | null;
+  status: "matched" | "unmatched";
+  reason: string;
+}
+
+export interface ProjectPriceImportPreviewResponse {
+  project: ProjectSummary;
+  mapping: ProjectPriceImportMapping[];
+  totalRows: number;
+  matchedRows: number;
+  unmatchedRows: number;
+  sampleRows: Record<string, string>[];
+  rows: ProjectPriceImportPreviewRow[];
+}
+
+export interface ConfirmProjectPriceImportResponse {
+  project: ProjectSummary;
+  importedPrices: number;
+  unmatchedRows: number;
+}
+
 export interface CatalogItem {
   id: string;
   supplierId: string;
@@ -150,6 +231,7 @@ export interface CatalogItem {
   displayName: string;
   sourceCategory: string;
   normalizedCategory: NormalizedCategory;
+  subcategory: string;
   unit: string;
   unitPrice: number;
   consumptionType: string;
@@ -165,6 +247,62 @@ export interface CatalogListResponse {
   items: CatalogItem[];
 }
 
+export interface ProcurementOrderSettings {
+  autoApproveBelow: number;
+  centralProcurementCategories: NormalizedCategory[];
+}
+
+export interface ProcurementOrderItemInput {
+  productId: string;
+  displayName: string;
+  normalizedCategory: NormalizedCategory;
+  unit: string;
+  unitPrice: number;
+  quantity: number;
+  supplierName: string;
+}
+
+export interface ProcurementOrderItem extends ProcurementOrderItemInput {
+  id: string;
+  lineTotal: number;
+}
+
+export interface ProcurementOrder {
+  id: string;
+  projectId: string | null;
+  projectName: string;
+  foremanName: string;
+  status: OrderStatus;
+  approvalRoute: ApprovalRoute;
+  approvalReason: string;
+  rejectionReason: string | null;
+  totalAmount: number;
+  currency: string;
+  createdAt: string;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  orderedAt: string | null;
+  deliveredAt: string | null;
+  items: ProcurementOrderItem[];
+}
+
+export interface ProcurementOrderCreateInput {
+  projectId?: string;
+  projectName: string;
+  foremanName: string;
+  items: ProcurementOrderItemInput[];
+}
+
+export interface ProcurementOrderActionInput {
+  action: "submit" | "approve" | "reject" | "mark_ordered" | "mark_delivered";
+  rejectionReason?: string;
+}
+
+export interface ProcurementOrdersResponse {
+  settings: ProcurementOrderSettings;
+  orders: ProcurementOrder[];
+}
+
 export interface UpdateCatalogItemInput {
   displayName?: string;
   normalizedCategory?: NormalizedCategory;
@@ -173,9 +311,11 @@ export interface UpdateCatalogItemInput {
   catalogStatus?: CatalogStatus;
 }
 
-export const DATABASE_TABLE = "normalized_products" as const;
+export const DATABASE_TABLES = ["normalized_products", "suppliers", "projects"] as const;
 
-export type DatabaseTableName = typeof DATABASE_TABLE;
+export const DEFAULT_DATABASE_TABLE = "normalized_products" as const;
+
+export type DatabaseTableName = (typeof DATABASE_TABLES)[number];
 
 export const DATABASE_COLUMN_KINDS = [
   "string",

@@ -4,6 +4,8 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import type {
   CatalogListResponse,
+  ConfirmProjectPriceImportResponse,
+  CreateProjectInput,
   CsvImportMapping,
   CsvImportPreviewResponse,
   DerivedFieldMapping,
@@ -11,6 +13,13 @@ import type {
   DatabaseTableRowsResponse,
   ErrorResponse,
   ImportBatchListResponse,
+  ProjectPriceImportMapping,
+  ProcurementOrderActionInput,
+  ProcurementOrderCreateInput,
+  ProcurementOrderSettings,
+  ProcurementOrdersResponse,
+  ProjectPriceImportPreviewResponse,
+  ProjectsListResponse,
   UpdateCatalogItemInput,
   UpdateDatabaseRowInput,
 } from "@comstruct/shared";
@@ -23,11 +32,19 @@ import {
 import {
   ApiError,
   confirmImport,
+  confirmProjectPriceImport,
+  createProject,
   createCsvImportPreview,
+  createProcurementOrder,
   listDatabaseRows,
   listDatabaseTables,
   listCatalogItems,
   listImports,
+  listProjects,
+  listProcurementOrders,
+  previewProjectPriceImport,
+  updateProcurementOrderSettings,
+  updateProcurementOrderStatus,
   updateCatalogItem,
   updateDatabaseRow,
 } from "./lib/supabase.js";
@@ -82,14 +99,11 @@ app.post(
         requestedMapping ?? buildDefaultMapping(columns)
       );
 
-      const customCategories = request.body.customCategories as string | undefined;
-
       const payload: CsvImportPreviewResponse = await createCsvImportPreview({
         fileName: request.file.originalname,
         rows: records,
         mapping,
         derivedMapping: requestedDerivedMapping,
-        customCategories,
       });
 
       response.json(payload);
@@ -108,13 +122,10 @@ app.post("/api/imports/:id/confirm", async (request, response, next) => {
       ? (request.body.derivedMapping as DerivedFieldMapping[])
       : undefined;
 
-    const customCategories = request.body.customCategories as string | undefined;
-
     const payload = await confirmImport(
       request.params.id,
       requestedMapping,
-      requestedDerivedMapping,
-      customCategories
+      requestedDerivedMapping
     );
     response.json(payload);
   } catch (error) {
@@ -130,6 +141,111 @@ app.get("/api/imports", async (_request, response, next) => {
     next(error);
   }
 });
+
+app.get("/api/projects", async (_request, response, next) => {
+  try {
+    const payload: ProjectsListResponse = {
+      projects: await listProjects(),
+    };
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/projects", async (request, response, next) => {
+  try {
+    const input = request.body as CreateProjectInput;
+    const project = await createProject(input);
+    response.json(project);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post(
+  "/api/project-price-imports/csv",
+  upload.single("file"),
+  async (request, response, next) => {
+    try {
+      if (!request.file) {
+        throw new ApiError(400, "No CSV file was uploaded.");
+      }
+
+      const projectId = String(request.body.projectId ?? "").trim();
+      if (!projectId) {
+        throw new ApiError(400, "Project selection is required.");
+      }
+      const requestedMapping = Array.isArray(request.body.mapping)
+        ? (request.body.mapping as ProjectPriceImportMapping[])
+        : request.body.mapping
+          ? (JSON.parse(request.body.mapping as string) as ProjectPriceImportMapping[])
+          : undefined;
+
+      const fileContent = request.file.buffer.toString("utf-8");
+      const records = parse(fileContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      }) as Array<Record<string, unknown>>;
+
+      if (records.length === 0) {
+        throw new ApiError(400, "The CSV file is empty.");
+      }
+
+      const payload: ProjectPriceImportPreviewResponse = await previewProjectPriceImport({
+        projectId,
+        rows: records,
+        mapping: requestedMapping,
+      });
+      response.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.post(
+  "/api/project-price-imports/confirm",
+  upload.single("file"),
+  async (request, response, next) => {
+    try {
+      if (!request.file) {
+        throw new ApiError(400, "No CSV file was uploaded.");
+      }
+
+      const projectId = String(request.body.projectId ?? "").trim();
+      if (!projectId) {
+        throw new ApiError(400, "Project selection is required.");
+      }
+      const requestedMapping = Array.isArray(request.body.mapping)
+        ? (request.body.mapping as ProjectPriceImportMapping[])
+        : request.body.mapping
+          ? (JSON.parse(request.body.mapping as string) as ProjectPriceImportMapping[])
+          : undefined;
+
+      const fileContent = request.file.buffer.toString("utf-8");
+      const records = parse(fileContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      }) as Array<Record<string, unknown>>;
+
+      if (records.length === 0) {
+        throw new ApiError(400, "The CSV file is empty.");
+      }
+
+      const payload: ConfirmProjectPriceImportResponse = await confirmProjectPriceImport({
+        projectId,
+        rows: records,
+        mapping: requestedMapping,
+      });
+      response.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 app.get("/api/catalog-items", async (request, response, next) => {
   try {
@@ -160,6 +276,45 @@ app.patch("/api/catalog-items/:id", async (request, response, next) => {
     const input = request.body as UpdateCatalogItemInput;
     const item = await updateCatalogItem(request.params.id, input);
     response.json(item);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/procurement-orders", async (_request, response, next) => {
+  try {
+    const payload: ProcurementOrdersResponse = await listProcurementOrders();
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/procurement-order-settings", async (request, response, next) => {
+  try {
+    const input = request.body as ProcurementOrderSettings;
+    const payload = await updateProcurementOrderSettings(input);
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/procurement-orders", async (request, response, next) => {
+  try {
+    const input = request.body as ProcurementOrderCreateInput;
+    const payload = await createProcurementOrder(input);
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/procurement-orders/:id", async (request, response, next) => {
+  try {
+    const input = request.body as ProcurementOrderActionInput;
+    const payload = await updateProcurementOrderStatus(request.params.id, input);
+    response.json(payload);
   } catch (error) {
     next(error);
   }

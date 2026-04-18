@@ -290,9 +290,212 @@ export function buildDefaultMapping(columns: string[]): CsvImportMapping[] {
     ["is_c_material", "isCMaterial"],
   ]);
 
+  const headerAliases: Array<{
+    target: CsvImportFieldTarget;
+    aliases: string[];
+  }> = [
+    {
+      target: "supplierSku",
+      aliases: [
+        "artikel id",
+        "artikelnummer",
+        "artikel nummer",
+        "article id",
+        "article number",
+        "item number",
+        "item no",
+        "item code",
+        "materialnummer",
+        "material number",
+        "material no",
+        "supplier sku",
+        "part number",
+        "part no",
+        "product code",
+        "sku",
+      ],
+    },
+    {
+      target: "sourceName",
+      aliases: [
+        "artikelname",
+        "artikel bezeichnung",
+        "bezeichnung",
+        "produktname",
+        "product name",
+        "product description",
+        "item description",
+        "item name",
+        "material description",
+        "source name",
+      ],
+    },
+    {
+      target: "sourceCategory",
+      aliases: [
+        "kategorie",
+        "produktgruppe",
+        "product group",
+        "product category",
+        "materialgruppe",
+        "warengruppe",
+        "gruppe",
+        "source category",
+        "category",
+      ],
+    },
+    {
+      target: "familyName",
+      aliases: ["produktfamilie", "produkt familie", "product family", "family name"],
+    },
+    {
+      target: "variantLabel",
+      aliases: [
+        "variant",
+        "variant label",
+        "ausfuhrung",
+        "ausführung",
+        "grosse",
+        "groesse",
+        "größe",
+        "size",
+        "dimension",
+        "format",
+      ],
+    },
+    {
+      target: "normalizedCategory",
+      aliases: [
+        "normalized category",
+        "mapped category",
+        "target category",
+        "zielkategorie",
+        "normkategorie",
+      ],
+    },
+    {
+      target: "subcategory",
+      aliases: ["subcategory", "sub category", "unterkategorie", "unter kategorie"],
+    },
+    {
+      target: "unit",
+      aliases: [
+        "einheit",
+        "mengeneinheit",
+        "unit",
+        "uom",
+        "unit of measure",
+        "me",
+      ],
+    },
+    {
+      target: "unitPrice",
+      aliases: [
+        "preis",
+        "preis eur",
+        "einzelpreis",
+        "stuckpreis",
+        "stückpreis",
+        "unit price",
+        "net price",
+        "contract price",
+      ],
+    },
+    {
+      target: "supplierName",
+      aliases: ["lieferant", "supplier", "supplier name", "vendor", "vendor name"],
+    },
+    {
+      target: "consumptionType",
+      aliases: ["verbrauchsart", "consumption type", "usage type", "item type"],
+    },
+    {
+      target: "hazardous",
+      aliases: ["gefahrgut", "hazardous", "hazmat", "dangerous goods"],
+    },
+    {
+      target: "storageLocation",
+      aliases: ["lagerort", "lager", "storage location", "storage", "warehouse location"],
+    },
+    {
+      target: "typicalSite",
+      aliases: [
+        "typische baustelle",
+        "typical site",
+        "trade",
+        "gewerk",
+        "einsatzbereich",
+        "project phase",
+      ],
+    },
+    {
+      target: "catalogStatus",
+      aliases: ["catalog status", "import status", "freigabe status", "status"],
+    },
+    {
+      target: "isCMaterial",
+      aliases: ["is c material", "c material", "c material flag", "tail spend"],
+    },
+  ];
+
+  function scoreAliasMatch(sourceColumn: string, alias: string): number {
+    const normalizedColumn = normalizeComparable(sourceColumn);
+    const normalizedAlias = normalizeComparable(alias);
+
+    if (!normalizedColumn || !normalizedAlias) {
+      return 0;
+    }
+
+    if (normalizedColumn === normalizedAlias) {
+      return 100 + normalizedAlias.length;
+    }
+
+    if (
+      normalizedColumn.includes(normalizedAlias) ||
+      normalizedAlias.includes(normalizedColumn)
+    ) {
+      return 80 + normalizedAlias.length;
+    }
+
+    const columnTokens = new Set(normalizedColumn.split(" ").filter(Boolean));
+    const aliasTokens = normalizedAlias.split(" ").filter(Boolean);
+    if (aliasTokens.length === 0) {
+      return 0;
+    }
+
+    if (aliasTokens.every((token) => columnTokens.has(token))) {
+      return 60 + aliasTokens.length;
+    }
+
+    return 0;
+  }
+
+  function inferTarget(sourceColumn: string): CsvImportFieldTarget | "ignore" {
+    const directMatch =
+      targetByColumn.get(sourceColumn) ?? targetByColumn.get(sourceColumn.trim().toLowerCase());
+    if (directMatch) {
+      return directMatch;
+    }
+
+    let bestTarget: CsvImportFieldTarget | "ignore" = "ignore";
+    let bestScore = 0;
+
+    for (const candidate of headerAliases) {
+      for (const alias of candidate.aliases) {
+        const score = scoreAliasMatch(sourceColumn, alias);
+        if (score > bestScore) {
+          bestScore = score;
+          bestTarget = candidate.target;
+        }
+      }
+    }
+
+    return bestTarget;
+  }
+
   return columns.map((sourceColumn) => ({
     sourceColumn,
-    target: targetByColumn.get(sourceColumn) ?? "ignore"
+    target: inferTarget(sourceColumn),
   }));
 }
 

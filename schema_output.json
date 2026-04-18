@@ -24,6 +24,18 @@
       "default": "now()",
       "format": "timestamp with time zone",
       "type": "string"
+    },
+    "import_status": {
+      "default": "draft",
+      "format": "text",
+      "type": "string"
+    },
+    "original_filename": {
+      "format": "text",
+      "type": "string"
+    },
+    "mapping_config": {
+      "format": "jsonb"
     }
   },
   "raw_product_rows": {
@@ -67,6 +79,34 @@
       "default": "now()",
       "format": "timestamp with time zone",
       "type": "string"
+    },
+    "supplier_name": {
+      "format": "text",
+      "type": "string"
+    },
+    "raw_category": {
+      "format": "text",
+      "type": "string"
+    },
+    "raw_consumption_type": {
+      "format": "text",
+      "type": "string"
+    },
+    "raw_hazardous": {
+      "default": false,
+      "format": "boolean",
+      "type": "boolean"
+    },
+    "raw_storage_location": {
+      "format": "text",
+      "type": "string"
+    },
+    "raw_typical_site": {
+      "format": "text",
+      "type": "string"
+    },
+    "source_payload": {
+      "format": "jsonb"
     }
   },
   "normalized_products": {
@@ -134,6 +174,40 @@
     "weight_kg": {
       "format": "numeric",
       "type": "number"
+    },
+    "source_name": {
+      "format": "text",
+      "type": "string"
+    },
+    "catalog_status": {
+      "default": "imported",
+      "format": "text",
+      "type": "string"
+    },
+    "is_c_material": {
+      "default": true,
+      "format": "boolean",
+      "type": "boolean"
+    },
+    "hazardous": {
+      "default": false,
+      "format": "boolean",
+      "type": "boolean"
+    },
+    "family_name": {
+      "format": "text",
+      "type": "string"
+    },
+    "family_key": {
+      "format": "text",
+      "type": "string"
+    },
+    "variant_label": {
+      "format": "text",
+      "type": "string"
+    },
+    "variant_attributes": {
+      "format": "jsonb"
     }
   },
   "supplier_product_mapping": {
@@ -169,6 +243,18 @@
       "default": "now()",
       "format": "timestamp with time zone",
       "type": "string"
+    },
+    "project_price": {
+      "format": "numeric",
+      "type": "number"
+    },
+    "discount_percent": {
+      "format": "numeric",
+      "type": "number"
+    },
+    "project_id": {
+      "format": "uuid",
+      "type": "string"
     }
   },
   "suppliers": {
@@ -201,6 +287,10 @@
       "default": "now()",
       "format": "timestamp with time zone",
       "type": "string"
+    },
+    "supplier_discount_pct": {
+      "format": "numeric",
+      "type": "number"
     }
   }
 }
