@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CATALOG_STATUSES,
   CSV_IMPORT_TARGETS,
+  DATABASE_TABLE,
+  DEFAULT_DERIVED_FIELD_MAPPINGS,
+  DERIVED_FIELD_TARGETS,
   NORMALIZED_CATEGORIES,
   type CatalogItem,
   type CatalogListResponse,
@@ -10,15 +13,21 @@ import {
   type CsvImportFieldTarget,
   type CsvImportMapping,
   type CsvImportPreviewResponse,
+  type DerivedFieldMapping,
+  type DerivedFieldTarget,
+  type DatabaseColumnDefinition,
+  type DatabaseRow,
+  type DatabaseTableDefinition,
+  type DatabaseTableRowsResponse,
   type ErrorResponse,
   type ImportBatchListResponse,
   type ImportBatchSummary,
-  type NormalizedCategory
+  type NormalizedCategory,
 } from "@comstruct/shared";
 
 const API_BASE = "http://localhost:4000/api";
 
-type ViewKey = "imports" | "catalog";
+type ViewKey = "imports" | "catalog" | "database";
 
 type FilterState = {
   supplier: string;
@@ -26,10 +35,59 @@ type FilterState = {
   normalizedCategory: NormalizedCategory | "all";
 };
 
+function SidebarIcon({ view }: { view: ViewKey }) {
+  if (view === "imports") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M12 3v11m0 0 4-4m-4 4-4-4M5 17.5V19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  if (view === "catalog") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M5 6.5A2.5 2.5 0 0 1 7.5 4H19v14.5A1.5 1.5 0 0 0 17.5 17H7.5A2.5 2.5 0 0 0 5 19.5Zm0 0V19.5M9 8h6m-6 4h8m-8 4h5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M4 7.5h16M4 12h16M4 16.5h10M6.5 5v14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 const TARGET_LABELS: Record<CsvImportFieldTarget | "ignore", string> = {
   supplierSku: "Supplier SKU",
   sourceName: "Product name",
   sourceCategory: "Source category",
+  familyName: "Family name",
+  variantLabel: "Variant",
+  normalizedCategory: "Normalized category",
+  subcategory: "Subcategory",
   unit: "Unit",
   unitPrice: "Unit price",
   supplierName: "Supplier name",
@@ -37,7 +95,24 @@ const TARGET_LABELS: Record<CsvImportFieldTarget | "ignore", string> = {
   hazardous: "Hazardous",
   storageLocation: "Storage location",
   typicalSite: "Typical site",
-  ignore: "Ignore"
+  catalogStatus: "Catalog status",
+  isCMaterial: "C-material flag",
+  ignore: "Ignore",
+};
+
+const DERIVED_TARGET_LABELS: Record<DerivedFieldTarget, string> = {
+  family_name: "family_name",
+  product_name: "product_name",
+  source_name: "source_name",
+  size: "size",
+  variant_label: "variant_label",
+  variant_attributes: "variant_attributes",
+  category: "category",
+  subcategory: "subcategory",
+  source_category: "source_category",
+  "packaging.familyName": "packaging.familyName",
+  "packaging.variantLabel": "packaging.variantLabel",
+  "packaging.variantAttributes": "packaging.variantAttributes",
 };
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -55,6 +130,30 @@ async function readJson<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
+function serializeCellValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
+function getRowId(row: DatabaseRow, table: DatabaseTableDefinition): string {
+  return String(row[table.primaryKey] ?? "");
+}
+
+function isLongTextColumn(column: DatabaseColumnDefinition): boolean {
+  return ["raw_description", "file_url", "packaging"].includes(column.name);
+}
+
 export default function App() {
   const [activeView, setActiveView] = useState<ViewKey>("imports");
   const [imports, setImports] = useState<ImportBatchSummary[]>([]);
@@ -63,16 +162,29 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<CsvImportPreviewResponse | null>(null);
   const [mappingDraft, setMappingDraft] = useState<CsvImportMapping[]>([]);
+  const [derivedMappingDraft, setDerivedMappingDraft] = useState<DerivedFieldMapping[]>(
+    DEFAULT_DERIVED_FIELD_MAPPINGS
+  );
+  const [customCategories, setCustomCategories] = useState("");
   const [filters, setFilters] = useState<FilterState>({
     supplier: "all",
     catalogStatus: "all",
-    normalizedCategory: "all"
+    normalizedCategory: "all",
   });
+  const [selectedTable, setSelectedTable] = useState<DatabaseTableDefinition | null>(null);
+  const [databaseRows, setDatabaseRows] = useState<DatabaseRow[]>([]);
+  const [databaseDrafts, setDatabaseDrafts] = useState<Record<string, Record<string, unknown>>>({});
+  const [databaseRowCount, setDatabaseRowCount] = useState(0);
+  const [databaseSearchQuery, setDatabaseSearchQuery] = useState("");
+  const [databaseColumnFilters, setDatabaseColumnFilters] = useState<Record<string, string[]>>({});
+  const [activeDatabaseFilterColumn, setActiveDatabaseFilterColumn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
+  const [isDatabaseLoading, setIsDatabaseLoading] = useState(false);
+  const [savingDatabaseRowId, setSavingDatabaseRowId] = useState<string | null>(null);
 
   async function loadImports() {
     const response = await fetch(`${API_BASE}/imports`);
@@ -100,13 +212,36 @@ export default function App() {
     setCatalogItems(payload.items);
   }
 
+  async function loadDatabaseRows() {
+    setIsDatabaseLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/database/tables/${DATABASE_TABLE}/rows`);
+      const payload = await readJson<DatabaseTableRowsResponse>(response);
+      setSelectedTable(payload.table);
+      setDatabaseRows(payload.rows);
+      setDatabaseRowCount(payload.rowCount);
+      setDatabaseDrafts({});
+      setDatabaseSearchQuery("");
+      setDatabaseColumnFilters({});
+      setActiveDatabaseFilterColumn(null);
+    } finally {
+      setIsDatabaseLoading(false);
+    }
+  }
+
   useEffect(() => {
     void (async () => {
       try {
         setError(null);
         await Promise.all([loadImports(), loadCatalog()]);
+        await loadDatabaseRows();
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "The workspace could not be loaded.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "The workspace could not be loaded."
+        );
       }
     })();
   }, []);
@@ -116,7 +251,9 @@ export default function App() {
       try {
         await loadCatalog();
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "The catalog could not be loaded.");
+        setError(
+          loadError instanceof Error ? loadError.message : "The catalog could not be loaded."
+        );
       }
     })();
   }, [filters]);
@@ -131,20 +268,77 @@ export default function App() {
       CATALOG_STATUSES.reduce<Record<CatalogStatus, number>>(
         (accumulator, status) => ({
           ...accumulator,
-          [status]: catalogItems.filter((item) => item.catalogStatus === status).length
+          [status]: catalogItems.filter((item) => item.catalogStatus === status).length,
         }),
         {
           imported: 0,
           published: 0,
-          excluded: 0
+          excluded: 0,
         }
       ),
     [catalogItems]
   );
 
+  const databaseDraftCount = useMemo(
+    () => Object.keys(databaseDrafts).length,
+    [databaseDrafts]
+  );
+
+  const activeDatabaseColumnFilterCount = useMemo(
+    () =>
+      Object.values(databaseColumnFilters).filter((values) => values.length > 0).length,
+    [databaseColumnFilters]
+  );
+
+  const databaseColumnFilterOptions = useMemo(() => {
+    if (!selectedTable) {
+      return {} as Record<string, string[]>;
+    }
+
+    return Object.fromEntries(
+      selectedTable.columns.map((column) => {
+        const options = Array.from(
+          new Set(databaseRows.map((row) => serializeCellValue(row[column.name]) || "null"))
+        ).sort((left, right) => left.localeCompare(right));
+
+        return [column.name, options];
+      })
+    ) as Record<string, string[]>;
+  }, [databaseRows, selectedTable]);
+
+  const filteredDatabaseRows = useMemo(() => {
+    if (!selectedTable) {
+      return databaseRows;
+    }
+
+    const normalizedSearch = databaseSearchQuery.trim().toLowerCase();
+
+    return databaseRows.filter((row) => {
+      const matchesSearch =
+        normalizedSearch.length === 0 ||
+        selectedTable.columns.some((column) =>
+          serializeCellValue(row[column.name]).toLowerCase().includes(normalizedSearch)
+        );
+
+      if (!matchesSearch) {
+        return false;
+      }
+
+      return selectedTable.columns.every((column) => {
+        const selectedValues = databaseColumnFilters[column.name] ?? [];
+        if (selectedValues.length === 0) {
+          return true;
+        }
+
+        const cellValue = serializeCellValue(row[column.name]) || "null";
+        return selectedValues.includes(cellValue);
+      });
+    });
+  }, [databaseColumnFilters, databaseRows, databaseSearchQuery, selectedTable]);
+
   async function uploadCsv(mapping?: CsvImportMapping[]) {
     if (!selectedFile) {
-      setError("Bitte zuerst eine CSV-Datei auswählen.");
+      setError("Select a CSV file first.");
       return;
     }
 
@@ -159,19 +353,30 @@ export default function App() {
       formData.append("mapping", JSON.stringify(mapping));
     }
 
+    formData.append("derivedMapping", JSON.stringify(derivedMappingDraft));
+
+    if (customCategories) {
+      formData.append("customCategories", customCategories);
+    }
+
     try {
       const response = await fetch(`${API_BASE}/imports/csv`, {
         method: "POST",
-        body: formData
+        body: formData,
       });
 
       const payload = await readJson<CsvImportPreviewResponse>(response);
       setPreview(payload);
       setMappingDraft(payload.mapping);
-      setSuccess("Import-Preview erstellt. Prüfe jetzt Mapping und Vorschau.");
+      setDerivedMappingDraft(payload.derivedMapping);
+      setSuccess("Import preview created. Review the mapping and sample rows.");
       await loadImports();
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "Der CSV-Import ist fehlgeschlagen.");
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "The CSV import preview failed."
+      );
     } finally {
       setIsUploading(false);
     }
@@ -190,28 +395,39 @@ export default function App() {
       const response = await fetch(`${API_BASE}/imports/${preview.importBatch.id}/confirm`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          mapping: mappingDraft
-        })
+          mapping: mappingDraft,
+          derivedMapping: derivedMappingDraft,
+          customCategories,
+        }),
       });
 
       const payload = await readJson<ConfirmImportResponse>(response);
-      setSuccess(`${payload.importedItems} Produkte wurden in den Katalog übernommen.`);
+      setSuccess(`${payload.importedItems} products were imported into the catalog.`);
       setPreview(null);
       setMappingDraft([]);
+      setDerivedMappingDraft(DEFAULT_DERIVED_FIELD_MAPPINGS);
       setSelectedFile(null);
       setActiveView("catalog");
-      await Promise.all([loadImports(), loadCatalog()]);
+      await Promise.all([loadImports(), loadCatalog(), loadDatabaseRows()]);
     } catch (confirmError) {
-      setError(confirmError instanceof Error ? confirmError.message : "Der Import konnte nicht bestätigt werden.");
+      setError(
+        confirmError instanceof Error
+          ? confirmError.message
+          : "The import could not be confirmed."
+      );
     } finally {
       setIsConfirming(false);
     }
   }
 
-  function updateDraftValue<K extends keyof CatalogItem>(id: string, key: K, value: CatalogItem[K]) {
+  function updateDraftValue<K extends keyof CatalogItem>(
+    id: string,
+    key: K,
+    value: CatalogItem[K]
+  ) {
     setDrafts((currentDrafts) => {
       const base = currentDrafts[id] ?? catalogItems.find((item) => item.id === id);
 
@@ -223,10 +439,16 @@ export default function App() {
         ...currentDrafts,
         [id]: {
           ...base,
-          [key]: value
-        }
+          [key]: value,
+        },
       };
     });
+  }
+
+  function updateDerivedMapping(field: DerivedFieldMapping["field"], target: DerivedFieldTarget) {
+    setDerivedMappingDraft((current) =>
+      current.map((entry) => (entry.field === field ? { ...entry, target } : entry))
+    );
   }
 
   async function saveCatalogItem(itemId: string) {
@@ -245,15 +467,15 @@ export default function App() {
       const response = await fetch(`${API_BASE}/catalog-items/${itemId}`, {
         method: "PATCH",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           displayName: draft.displayName,
           normalizedCategory: draft.normalizedCategory,
           unitPrice: draft.unitPrice,
           isCMaterial: draft.isCMaterial,
-          catalogStatus: draft.catalogStatus
-        })
+          catalogStatus: draft.catalogStatus,
+        }),
       });
 
       const updated = await readJson<CatalogItem>(response);
@@ -263,52 +485,316 @@ export default function App() {
         delete nextDrafts[itemId];
         return nextDrafts;
       });
-      setSuccess(`"${updated.displayName}" wurde aktualisiert.`);
+      setSuccess(`"${updated.displayName}" was updated.`);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Das Produkt konnte nicht gespeichert werden.");
+      setError(
+        saveError instanceof Error ? saveError.message : "The catalog item could not be saved."
+      );
     } finally {
       setSavingItemId(null);
     }
   }
 
+  function updateDatabaseDraft(rowId: string, columnName: string, value: unknown) {
+    setDatabaseDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [rowId]: {
+        ...(currentDrafts[rowId] ?? {}),
+        [columnName]: value,
+      },
+    }));
+  }
+
+  function setDatabaseColumnFilter(columnName: string, values: string[]) {
+    setDatabaseColumnFilters((currentFilters) => ({
+      ...currentFilters,
+      [columnName]: values,
+    }));
+  }
+
+  function toggleDatabaseFilterColumn(columnName: string) {
+    setActiveDatabaseFilterColumn((current) => (current === columnName ? null : columnName));
+  }
+
+  function toggleDatabaseFilterValue(columnName: string, value: string) {
+    const currentValues = databaseColumnFilters[columnName] ?? [];
+    const nextValues = currentValues.includes(value)
+      ? currentValues.filter((entry) => entry !== value)
+      : [...currentValues, value];
+
+    setDatabaseColumnFilter(columnName, nextValues);
+  }
+
+  function clearSingleDatabaseFilter(columnName: string) {
+    setDatabaseColumnFilters((currentFilters) => {
+      const nextFilters = { ...currentFilters };
+      delete nextFilters[columnName];
+      return nextFilters;
+    });
+  }
+
+  function clearDatabaseFilters() {
+    setDatabaseSearchQuery("");
+    setDatabaseColumnFilters({});
+    setActiveDatabaseFilterColumn(null);
+  }
+
+  function discardDatabaseDraft(rowId: string) {
+    setDatabaseDrafts((currentDrafts) => {
+      const nextDrafts = { ...currentDrafts };
+      delete nextDrafts[rowId];
+      return nextDrafts;
+    });
+  }
+
+  function getDatabaseValue(
+    rowId: string,
+    columnName: string,
+    fallbackValue: unknown
+  ): unknown {
+    const draft = databaseDrafts[rowId];
+    if (draft && columnName in draft) {
+      return draft[columnName];
+    }
+
+    return fallbackValue;
+  }
+
+  async function saveDatabaseRow(rowId: string) {
+    if (!selectedTable) {
+      return;
+    }
+
+    const values = databaseDrafts[rowId];
+    if (!values || Object.keys(values).length === 0) {
+      return;
+    }
+
+    setSavingDatabaseRowId(rowId);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/database/tables/${DATABASE_TABLE}/rows/${rowId}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ values }),
+        }
+      );
+
+      const updated = await readJson<DatabaseRow>(response);
+      setDatabaseRows((rows) =>
+        rows.map((row) => (getRowId(row, selectedTable) === rowId ? updated : row))
+      );
+      discardDatabaseDraft(rowId);
+      setSuccess(`${selectedTable.label} row ${rowId.slice(0, 8)} was updated.`);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : "The database row could not be saved."
+      );
+    } finally {
+      setSavingDatabaseRowId(null);
+    }
+  }
+
+  function renderDatabaseEditor(
+    column: DatabaseColumnDefinition,
+    rowId: string,
+    value: unknown
+  ) {
+    if (column.type === "boolean") {
+      return (
+        <label className="checkbox" key={column.name}>
+          <input
+            type="checkbox"
+            checked={Boolean(value)}
+            onChange={(event) => updateDatabaseDraft(rowId, column.name, event.target.checked)}
+          />
+          <span>{Boolean(value) ? "True" : "False"}</span>
+        </label>
+      );
+    }
+
+    if (column.type === "number" || column.type === "integer") {
+      return (
+        <input
+          key={column.name}
+          type="number"
+          step={column.type === "integer" ? 1 : 0.01}
+          value={value === null || value === undefined ? "" : String(value)}
+          onChange={(event) =>
+            updateDatabaseDraft(
+              rowId,
+              column.name,
+              event.target.value === "" ? null : Number(event.target.value)
+            )
+          }
+        />
+      );
+    }
+
+    if (column.type === "json" || isLongTextColumn(column)) {
+      return (
+        <textarea
+          key={column.name}
+          className="cell-textarea"
+          value={serializeCellValue(value)}
+          onChange={(event) => updateDatabaseDraft(rowId, column.name, event.target.value)}
+        />
+      );
+    }
+
+    return (
+      <input
+        key={column.name}
+        value={serializeCellValue(value)}
+        onChange={(event) => updateDatabaseDraft(rowId, column.name, event.target.value)}
+      />
+    );
+  }
+
+  function renderDatabaseColumnFilterMenu(column: DatabaseColumnDefinition) {
+    const options = databaseColumnFilterOptions[column.name] ?? [];
+    const selectedValues = databaseColumnFilters[column.name] ?? [];
+    const isOpen = activeDatabaseFilterColumn === column.name;
+
+    return (
+      <div className="database-filter-wrap">
+        <button
+          type="button"
+          className={selectedValues.length > 0 ? "filter-trigger active" : "filter-trigger"}
+          onClick={() => toggleDatabaseFilterColumn(column.name)}
+        >
+          Filter
+          {selectedValues.length > 0 ? <span>{selectedValues.length}</span> : null}
+        </button>
+
+        {isOpen ? (
+          <div className="database-filter-menu">
+            <div className="database-filter-menu-actions">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => clearSingleDatabaseFilter(column.name)}
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => setActiveDatabaseFilterColumn(null)}
+              >
+                Done
+              </button>
+            </div>
+
+            <div className="database-filter-list">
+              {options.map((option) => (
+                <label className="database-filter-option" key={`${column.name}-${option}`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedValues.includes(option)}
+                    onChange={() => toggleDatabaseFilterValue(column.name, option)}
+                  />
+                  <span>{option}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const headerCopy =
+    activeView === "imports"
+      ? {
+          tag: "Supplier Import Review",
+          title:
+            "Upload supplier CSV files, verify field mapping, then publish into the procurement catalog.",
+        }
+      : activeView === "catalog"
+        ? {
+            tag: "Catalog Stewardship",
+            title: "Clean product names, normalize categories, and decide what is published.",
+          }
+        : {
+            tag: "Supabase Data Manager",
+            title:
+              "Browse the live normalized_products table in Supabase and update row values directly.",
+          };
+
+  const viewNavigation = [
+    {
+      key: "imports" as const,
+      label: "Import",
+      description: "CSV uploads, field mapping, AI preview",
+      count: imports.length,
+    },
+    {
+      key: "catalog" as const,
+      label: "Catalog",
+      description: "Cleanup queue and publishing decisions",
+      count: catalogItems.length,
+    },
+    {
+      key: "database" as const,
+      label: "Database",
+      description: "Direct row editing in normalized_products",
+      count: 1,
+    },
+  ];
+
   return (
     <main className="workspace-shell">
       <aside className="workspace-sidebar">
-        <div>
-          <p className="eyebrow">Comstruct</p>
-          <h1>Procurement cleanup cockpit</h1>
-          <p className="sidebar-copy">
-            Wir verwandeln Supplier-CSV-Dateien in einen bereinigten, steuerbaren
-            C-Material-Katalog fur Procurement.
-          </p>
+        <div className="sidebar-brand">
+          <div className="brand-mark" aria-hidden="true">
+            C
+          </div>
+          <div>
+            <p className="eyebrow">Comstruct</p>
+            <h1>Procurement workspace</h1>
+            <p className="sidebar-copy">
+              Import supplier data, review catalog output, and correct database records from
+              one place.
+            </p>
+          </div>
         </div>
 
         <nav className="sidebar-nav" aria-label="Workspace sections">
-          <button
-            className={activeView === "imports" ? "nav-button active" : "nav-button"}
-            onClick={() => setActiveView("imports")}
-            type="button"
-          >
-            Imports
-            <span>{imports.length}</span>
-          </button>
-          <button
-            className={activeView === "catalog" ? "nav-button active" : "nav-button"}
-            onClick={() => setActiveView("catalog")}
-            type="button"
-          >
-            Catalog
-            <span>{catalogItems.length}</span>
-          </button>
+          <div className="sidebar-section-title">Functions</div>
+          {viewNavigation.map((item) => (
+            <button
+              key={item.key}
+              className={activeView === item.key ? "nav-button active" : "nav-button"}
+              onClick={() => setActiveView(item.key)}
+              type="button"
+            >
+              <span className="nav-button-main">
+                <span className="nav-icon">
+                  <SidebarIcon view={item.key} />
+                </span>
+                <span className="nav-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.description}</small>
+                </span>
+              </span>
+              <span>{item.count}</span>
+            </button>
+          ))}
         </nav>
 
         <section className="sidebar-card">
-          <span className="sidebar-card-label">What this flow is for</span>
-          <strong>Small everyday site items</strong>
+          <span className="sidebar-card-label">Current Workspace</span>
+          <strong>Tail-spend procurement control</strong>
           <p>
-            Consumables, PPE, fastening, electrical accessories and other low-value
-            items that procurement wants to clean up before they are exposed in the
-            C-material process.
+            This workspace is focused on C-material data quality: import, normalize,
+            validate, and correct before operational use.
           </p>
         </section>
       </aside>
@@ -316,30 +802,41 @@ export default function App() {
       <section className="workspace-main">
         <header className="page-header">
           <div>
-            <p className="section-tag">
-              {activeView === "imports" ? "Supplier Import Review" : "Catalog Stewardship"}
-            </p>
-            <h2>
-              {activeView === "imports"
-                ? "Upload sample.csv, verify mapping, then publish into the procurement catalog."
-                : "Clean product names, normalize categories, and decide what is published."}
-            </h2>
+            <p className="section-tag">{headerCopy.tag}</p>
+            <h2>{headerCopy.title}</h2>
           </div>
 
-          <div className="header-stats">
-            <article>
-              <span>Imported</span>
-              <strong>{statusCounts.imported}</strong>
-            </article>
-            <article>
-              <span>Published</span>
-              <strong>{statusCounts.published}</strong>
-            </article>
-            <article>
-              <span>Excluded</span>
-              <strong>{statusCounts.excluded}</strong>
-            </article>
-          </div>
+          {activeView === "database" ? (
+            <div className="header-stats">
+              <article>
+                <span>Table</span>
+                <strong>1</strong>
+              </article>
+              <article>
+                <span>Visible Rows</span>
+                <strong>{filteredDatabaseRows.length}</strong>
+              </article>
+              <article>
+                <span>Draft Rows</span>
+                <strong>{databaseDraftCount}</strong>
+              </article>
+            </div>
+          ) : (
+            <div className="header-stats">
+              <article>
+                <span>Imported</span>
+                <strong>{statusCounts.imported}</strong>
+              </article>
+              <article>
+                <span>Published</span>
+                <strong>{statusCounts.published}</strong>
+              </article>
+              <article>
+                <span>Excluded</span>
+                <strong>{statusCounts.excluded}</strong>
+              </article>
+            </div>
+          )}
         </header>
 
         {error ? <p className="banner error">{error}</p> : null}
@@ -371,6 +868,19 @@ export default function App() {
                   />
                 </label>
 
+                <label className="field">
+                  <span>Unterkategorien</span>
+                  <textarea
+                    value={customCategories}
+                    onChange={(event) => setCustomCategories(event.target.value)}
+                    placeholder="Befestigung - Schrauben, Elektro - Kabel und Leitungen, PSA - Handschutz"
+                    className="field-textarea"
+                  />
+                  <p className="field-help">
+                    Erlaubte Enum-Werte als kommagetrennte oder zeilengetrennte Liste eingeben.
+                  </p>
+                </label>
+
                 <div className="button-row">
                   <button type="submit" disabled={isUploading}>
                     {isUploading ? "Building preview..." : "Create preview"}
@@ -393,7 +903,7 @@ export default function App() {
                 </div>
 
                 {imports.length === 0 ? (
-                  <p className="empty-state">Noch keine Imports vorhanden.</p>
+                  <p className="empty-state">No imports yet.</p>
                 ) : (
                   <div className="import-list">
                     {imports.slice(0, 5).map((importBatch) => (
@@ -419,7 +929,11 @@ export default function App() {
                   <h3>Preview and normalize before import</h3>
                 </div>
                 {preview ? (
-                  <button type="button" onClick={() => void confirmCurrentImport()} disabled={isConfirming}>
+                  <button
+                    type="button"
+                    onClick={() => void confirmCurrentImport()}
+                    disabled={isConfirming}
+                  >
                     {isConfirming ? "Importing..." : "Import into catalog"}
                   </button>
                 ) : null}
@@ -427,8 +941,8 @@ export default function App() {
 
               {!preview ? (
                 <p className="empty-state">
-                  Lade `sample.csv` hoch, um die Mapping-Vorschau und die ersten bereinigten
-                  Produktzeilen zu sehen.
+                  Upload a supplier CSV to inspect the field mapping and review all
+                  normalized rows before committing them.
                 </p>
               ) : (
                 <>
@@ -447,29 +961,116 @@ export default function App() {
                     </article>
                   </div>
 
-                  <div className="table-shell">
-                    <table>
+                  <div className="table-shell" style={{ overflowX: "auto" }}>
+                    <table style={{ whiteSpace: "nowrap", minWidth: "100%" }}>
                       <thead>
                         <tr>
-                          <th>CSV column</th>
-                          <th>Maps to</th>
-                          <th>Sample value</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mappingDraft.map((entry) => (
-                          <tr key={entry.sourceColumn}>
-                            <td>{entry.sourceColumn}</td>
-                            <td>
+                          <th style={{ minWidth: "180px", padding: "12px" }}>
+                            <div className="mapping-header">Normalized family</div>
+                            <select
+                              value={
+                                derivedMappingDraft.find((entry) => entry.field === "familyName")
+                                  ?.target ?? "family_name"
+                              }
+                              style={{ width: "100%" }}
+                              onChange={(event) =>
+                                updateDerivedMapping(
+                                  "familyName",
+                                  event.target.value as DerivedFieldTarget
+                                )
+                              }
+                            >
+                              {DERIVED_FIELD_TARGETS.familyName.map((target) => (
+                                <option key={target} value={target}>
+                                  {DERIVED_TARGET_LABELS[target]}
+                                </option>
+                              ))}
+                            </select>
+                          </th>
+                          <th style={{ minWidth: "180px", padding: "12px" }}>
+                            <div className="mapping-header">Variant</div>
+                            <select
+                              value={
+                                derivedMappingDraft.find((entry) => entry.field === "variantLabel")
+                                  ?.target ?? "variant_label"
+                              }
+                              style={{ width: "100%" }}
+                              onChange={(event) =>
+                                updateDerivedMapping(
+                                  "variantLabel",
+                                  event.target.value as DerivedFieldTarget
+                                )
+                              }
+                            >
+                              {DERIVED_FIELD_TARGETS.variantLabel.map((target) => (
+                                <option key={target} value={target}>
+                                  {DERIVED_TARGET_LABELS[target]}
+                                </option>
+                              ))}
+                            </select>
+                          </th>
+                          <th style={{ minWidth: "220px", padding: "12px" }}>
+                            <div className="mapping-header">Variant attributes</div>
+                            <select
+                              value={
+                                derivedMappingDraft.find(
+                                  (entry) => entry.field === "variantAttributes"
+                                )?.target ?? "variant_attributes"
+                              }
+                              style={{ width: "100%" }}
+                              onChange={(event) =>
+                                updateDerivedMapping(
+                                  "variantAttributes",
+                                  event.target.value as DerivedFieldTarget
+                                )
+                              }
+                            >
+                              {DERIVED_FIELD_TARGETS.variantAttributes.map((target) => (
+                                <option key={target} value={target}>
+                                  {DERIVED_TARGET_LABELS[target]}
+                                </option>
+                              ))}
+                            </select>
+                          </th>
+                          <th style={{ minWidth: "160px", padding: "12px" }}>
+                            <div className="mapping-header">Normalized category</div>
+                            <select
+                              value={
+                                derivedMappingDraft.find(
+                                  (entry) => entry.field === "normalizedCategory"
+                                )?.target ?? "category"
+                              }
+                              style={{ width: "100%" }}
+                              onChange={(event) =>
+                                updateDerivedMapping(
+                                  "normalizedCategory",
+                                  event.target.value as DerivedFieldTarget
+                                )
+                              }
+                            >
+                              {DERIVED_FIELD_TARGETS.normalizedCategory.map((target) => (
+                                <option key={target} value={target}>
+                                  {DERIVED_TARGET_LABELS[target]}
+                                </option>
+                              ))}
+                            </select>
+                          </th>
+                          {mappingDraft.map((entry) => (
+                            <th key={entry.sourceColumn} style={{ minWidth: "180px", padding: "12px" }}>
+                              <div className="mapping-header">{entry.sourceColumn}</div>
                               <select
                                 value={entry.target}
+                                style={{ width: "100%" }}
                                 onChange={(event) =>
                                   setMappingDraft((current) =>
                                     current.map((mappingEntry) =>
                                       mappingEntry.sourceColumn === entry.sourceColumn
                                         ? {
                                             ...mappingEntry,
-                                            target: event.target.value as CsvImportFieldTarget | "ignore"
+                                            target:
+                                              event.target.value as
+                                                | CsvImportFieldTarget
+                                                | "ignore",
                                           }
                                         : mappingEntry
                                     )
@@ -483,44 +1084,36 @@ export default function App() {
                                   </option>
                                 ))}
                               </select>
-                            </td>
-                            <td>{preview.sampleRow[entry.sourceColumn]}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="panel-subheader with-gap">
-                    <h4>Normalized preview rows</h4>
-                    <span>{preview.previewRows.length}</span>
-                  </div>
-
-                  <div className="table-shell">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Supplier</th>
-                          <th>SKU</th>
-                          <th>Product</th>
-                          <th>Category</th>
-                          <th>Normalized</th>
-                          <th>Price</th>
+                            </th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {preview.previewRows.map((row, index) => (
-                          <tr key={`${row.supplierSku}-${index}`}>
-                            <td>{row.supplierName}</td>
-                            <td>{row.supplierSku}</td>
-                            <td>{row.sourceName}</td>
-                            <td>{row.sourceCategory}</td>
+                        {preview.sampleRows.map((row, index) => {
+                          const previewRow = preview.previewRows[index];
+
+                          return (
+                          <tr key={index}>
+                            <td>{previewRow?.familyName || <span style={{ color: "#d1d5db" }}>---</span>}</td>
+                            <td>{previewRow?.variantLabel || "standard"}</td>
                             <td>
-                              <span className="category-pill">{row.normalizedCategory}</span>
+                              {previewRow && previewRow.variantAttributes.length > 0
+                                ? previewRow.variantAttributes
+                                    .map((attribute) => `${attribute.key}: ${attribute.value}`)
+                                    .join(", ")
+                                : "none"}
                             </td>
-                            <td>€ {row.unitPrice.toFixed(2)}</td>
+                            <td>{previewRow?.normalizedCategory || "---"}</td>
+                            {mappingDraft.map((entry) => (
+                              <td key={entry.sourceColumn}>
+                                {row[entry.sourceColumn] || (
+                                  <span style={{ color: "#d1d5db" }}>---</span>
+                                )}
+                              </td>
+                            ))}
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -528,7 +1121,7 @@ export default function App() {
               )}
             </article>
           </section>
-        ) : (
+        ) : activeView === "catalog" ? (
           <section className="catalog-layout">
             <article className="panel filter-panel">
               <div className="panel-header">
@@ -563,7 +1156,7 @@ export default function App() {
                     onChange={(event) =>
                       setFilters((current) => ({
                         ...current,
-                        catalogStatus: event.target.value as CatalogStatus | "all"
+                        catalogStatus: event.target.value as CatalogStatus | "all",
                       }))
                     }
                   >
@@ -583,7 +1176,7 @@ export default function App() {
                     onChange={(event) =>
                       setFilters((current) => ({
                         ...current,
-                        normalizedCategory: event.target.value as NormalizedCategory | "all"
+                        normalizedCategory: event.target.value as NormalizedCategory | "all",
                       }))
                     }
                   >
@@ -608,8 +1201,7 @@ export default function App() {
 
               {catalogItems.length === 0 ? (
                 <p className="empty-state">
-                  Der Katalog ist noch leer. Bestatige zuerst einen Import aus dem
-                  Imports-Tab.
+                  The catalog is empty. Confirm an import from the Imports tab first.
                 </p>
               ) : (
                 <div className="table-shell">
@@ -671,7 +1263,11 @@ export default function App() {
                                 step="0.01"
                                 value={row.unitPrice}
                                 onChange={(event) =>
-                                  updateDraftValue(item.id, "unitPrice", Number(event.target.value))
+                                  updateDraftValue(
+                                    item.id,
+                                    "unitPrice",
+                                    Number(event.target.value)
+                                  )
                                 }
                               />
                               <span className="subline">{item.unit}</span>
@@ -709,6 +1305,8 @@ export default function App() {
                             <td>
                               <span className="subline">Use: {item.consumptionType || "n/a"}</span>
                               <span className="subline">Site: {item.typicalSite || "n/a"}</span>
+                              <span className="subline">Family: {item.familyName || "n/a"}</span>
+                              <span className="subline">Variant: {item.variantLabel || "standard"}</span>
                               <span className="subline">
                                 Hazardous: {item.hazardous ? "Yes" : "No"}
                               </span>
@@ -722,6 +1320,151 @@ export default function App() {
                               >
                                 {savingItemId === item.id ? "Saving..." : "Save"}
                               </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </article>
+          </section>
+        ) : (
+          <section className="database-layout">
+            <article className="panel database-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Live rows</p>
+                  <h3>{selectedTable?.label ?? "Normalized Products"}</h3>
+                </div>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => void loadDatabaseRows()}
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {selectedTable ? (
+                <div className="database-summary">
+                  <p>{selectedTable.description}</p>
+                  <div className="database-summary-meta">
+                    <span>Supabase table: {DATABASE_TABLE}</span>
+                    <span>Primary key: {selectedTable.primaryKey}</span>
+                    <span>Rows loaded: {databaseRowCount}</span>
+                    <span>Rows visible: {filteredDatabaseRows.length}</span>
+                    <span>Editable columns: {selectedTable.columns.filter((c) => c.editable).length}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedTable ? (
+                <section className="database-controls">
+                  <label className="field database-search-field">
+                    <span>Search all columns</span>
+                    <input
+                      value={databaseSearchQuery}
+                      onChange={(event) => setDatabaseSearchQuery(event.target.value)}
+                      placeholder="Search IDs, categories, product names, packaging, storage..."
+                    />
+                  </label>
+
+                  <div className="database-controls-meta">
+                    <span className="database-chip">
+                      {activeDatabaseColumnFilterCount} column filters active
+                    </span>
+                    <span className="database-chip">
+                      {filteredDatabaseRows.length} matching rows
+                    </span>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={clearDatabaseFilters}
+                      disabled={
+                        databaseSearchQuery.trim().length === 0 &&
+                        activeDatabaseColumnFilterCount === 0
+                      }
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
+              {!selectedTable ? (
+                <p className="empty-state">The `normalized_products` table could not be loaded.</p>
+              ) : isDatabaseLoading ? (
+                <p className="empty-state">Loading rows from Supabase...</p>
+              ) : databaseRows.length === 0 ? (
+                <p className="empty-state">This table is empty.</p>
+              ) : filteredDatabaseRows.length === 0 ? (
+                <p className="empty-state">
+                  No rows match the current search and column filters.
+                </p>
+              ) : (
+                <div className="table-shell">
+                  <table className="database-table">
+                    <thead>
+                      <tr>
+                        {selectedTable.columns.map((column) => (
+                          <th key={column.name} className="database-header-cell">
+                            <div className="database-header-top">
+                              <div>{column.label}</div>
+                              {renderDatabaseColumnFilterMenu(column)}
+                            </div>
+                            <span className="column-meta">
+                              {column.type}
+                              {column.editable ? " editable" : " read-only"}
+                            </span>
+                          </th>
+                        ))}
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredDatabaseRows.map((row) => {
+                        const rowId = getRowId(row, selectedTable);
+                        const rowDraft = databaseDrafts[rowId];
+                        const hasDraft = Boolean(rowDraft && Object.keys(rowDraft).length > 0);
+
+                        return (
+                          <tr key={rowId}>
+                            {selectedTable.columns.map((column) => {
+                              const value = getDatabaseValue(rowId, column.name, row[column.name]);
+
+                              return (
+                                <td key={column.name}>
+                                  {column.editable ? (
+                                    renderDatabaseEditor(column, rowId, value)
+                                  ) : (
+                                    <div className="cell-readonly">
+                                      {serializeCellValue(row[column.name]) || "null"}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td>
+                              <div className="row-actions">
+                                <button
+                                  type="button"
+                                  className="button-secondary"
+                                  disabled={!hasDraft || savingDatabaseRowId === rowId}
+                                  onClick={() => void saveDatabaseRow(rowId)}
+                                >
+                                  {savingDatabaseRowId === rowId ? "Saving..." : "Save row"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="button-secondary button-ghost"
+                                  disabled={!hasDraft || savingDatabaseRowId === rowId}
+                                  onClick={() => discardDatabaseDraft(rowId)}
+                                >
+                                  Reset
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );

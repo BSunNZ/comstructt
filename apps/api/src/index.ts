@@ -6,9 +6,13 @@ import type {
   CatalogListResponse,
   CsvImportMapping,
   CsvImportPreviewResponse,
+  DerivedFieldMapping,
+  DatabaseTableListResponse,
+  DatabaseTableRowsResponse,
   ErrorResponse,
   ImportBatchListResponse,
   UpdateCatalogItemInput,
+  UpdateDatabaseRowInput,
 } from "@comstruct/shared";
 import {
   buildDefaultMapping,
@@ -20,9 +24,12 @@ import {
   ApiError,
   confirmImport,
   createCsvImportPreview,
+  listDatabaseRows,
+  listDatabaseTables,
   listCatalogItems,
   listImports,
   updateCatalogItem,
+  updateDatabaseRow,
 } from "./lib/supabase.js";
 
 const app = express();
@@ -64,16 +71,25 @@ app.post(
         : request.body.mapping
           ? (JSON.parse(request.body.mapping as string) as CsvImportMapping[])
           : undefined;
+      const requestedDerivedMapping = Array.isArray(request.body.derivedMapping)
+        ? (request.body.derivedMapping as DerivedFieldMapping[])
+        : request.body.derivedMapping
+          ? (JSON.parse(request.body.derivedMapping as string) as DerivedFieldMapping[])
+          : undefined;
 
       const mapping = sanitizeIncomingMapping(
         columns,
         requestedMapping ?? buildDefaultMapping(columns)
       );
 
+      const customCategories = request.body.customCategories as string | undefined;
+
       const payload: CsvImportPreviewResponse = await createCsvImportPreview({
         fileName: request.file.originalname,
         rows: records,
         mapping,
+        derivedMapping: requestedDerivedMapping,
+        customCategories,
       });
 
       response.json(payload);
@@ -88,8 +104,18 @@ app.post("/api/imports/:id/confirm", async (request, response, next) => {
     const requestedMapping = Array.isArray(request.body.mapping)
       ? (request.body.mapping as CsvImportMapping[])
       : undefined;
+    const requestedDerivedMapping = Array.isArray(request.body.derivedMapping)
+      ? (request.body.derivedMapping as DerivedFieldMapping[])
+      : undefined;
 
-    const payload = await confirmImport(request.params.id, requestedMapping);
+    const customCategories = request.body.customCategories as string | undefined;
+
+    const payload = await confirmImport(
+      request.params.id,
+      requestedMapping,
+      requestedDerivedMapping,
+      customCategories
+    );
     response.json(payload);
   } catch (error) {
     next(error);
@@ -134,6 +160,36 @@ app.patch("/api/catalog-items/:id", async (request, response, next) => {
     const input = request.body as UpdateCatalogItemInput;
     const item = await updateCatalogItem(request.params.id, input);
     response.json(item);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/database/tables", (_request, response, next) => {
+  try {
+    const payload: DatabaseTableListResponse = {
+      tables: listDatabaseTables(),
+    };
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/database/tables/:table/rows", async (request, response, next) => {
+  try {
+    const payload: DatabaseTableRowsResponse = await listDatabaseRows(request.params.table);
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/database/tables/:table/rows/:id", async (request, response, next) => {
+  try {
+    const input = request.body as UpdateDatabaseRowInput;
+    const row = await updateDatabaseRow(request.params.table, request.params.id, input);
+    response.json(row);
   } catch (error) {
     next(error);
   }
