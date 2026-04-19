@@ -141,7 +141,10 @@ const OrderOverview = () => {
   const [selected, setSelected] = useState<DbOrder | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<DbOrder | null>(null);
-  
+  // Collapsed-by-default state for Bestellt / Geliefert / Abgelehnt sections.
+  // Requested ('Wartet auf Freigabe') is always expanded and not tracked here.
+  const [openSections, setOpenSections] = useState<Partial<Record<SectionKey, boolean>>>({});
+
 
   const refresh = async (alive: () => boolean = () => true) => {
     try {
