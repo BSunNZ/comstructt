@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { TopBar } from "@/components/TopBar";
 import { QuantityRow } from "@/components/QuantityRow";
@@ -8,12 +8,42 @@ import { toast } from "@/hooks/use-toast";
 import { PROJECTS } from "@/data/catalog";
 import { createOrder, getProjectMinApproval, isUuid } from "@/lib/orders";
 import { cartTotal, decideInitialStatus } from "@/lib/orderTotals";
+import { CartRecommendations } from "@/components/cart/CartRecommendations";
+import {
+  CartDeliveryCard,
+  CartApprovalCard,
+  CartVolumeTiersCard,
+  CartOrderMetaCard,
+  type OrderMeta,
+} from "@/components/cart/CartInfoCards";
 
 const Cart = () => {
   const { cart, updateQty, removeFromCart, clearCart, projectId } = useApp();
   const nav = useNavigate();
   const [submitting, setSubmitting] = useState(false);
   const [minApproval, setMinApproval] = useState<number>(0);
+
+  // Editable order metadata. Project number is seeded from the active
+  // project once we've matched it; the user can override anything before
+  // submitting. Note is appended to the existing project-code note.
+  const project = useMemo(
+    () => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0],
+    [projectId],
+  );
+  const [meta, setMeta] = useState<OrderMeta>({
+    costCenter: "",
+    projectNumber: project.code ?? "",
+    note: "",
+  });
+  // Keep projectNumber in sync if the active project changes mid-session,
+  // but only when the user hasn't typed something custom.
+  useEffect(() => {
+    setMeta((prev) =>
+      prev.projectNumber === "" || PROJECTS.some((p) => p.code === prev.projectNumber)
+        ? { ...prev, projectNumber: project.code ?? "" }
+        : prev,
+    );
+  }, [project.code]);
 
   // Fast workflow: an empty cart should never sit on /cart — bounce straight
   // back to the search page so the next add is one tap away. Skip the bounce
@@ -63,7 +93,6 @@ const Cart = () => {
       return;
     }
     setSubmitting(true);
-    const project = PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0];
     try {
       // Re-read the threshold at submit-time so we don't race a concurrent
       // change in the projects table between mount and tap.
@@ -71,11 +100,21 @@ const Cart = () => {
       const liveTotal = cartTotal(cart);
       const status = decideInitialStatus(liveTotal, liveThreshold);
 
+      // Stitch user-entered metadata into the notes column so the data
+      // survives even before we add dedicated columns for it.
+      const noteParts = [
+        meta.projectNumber ? `Projekt ${meta.projectNumber}` : null,
+        meta.costCenter ? `Kostenstelle ${meta.costCenter}` : null,
+        meta.note?.trim() ? meta.note.trim() : null,
+      ].filter(Boolean);
+      const composedNote =
+        noteParts.length > 0 ? noteParts.join(" · ") : project.code ? `Project ${project.code}` : null;
+
       await createOrder({
         projectId: project.id,
         siteName: project.name,
         orderedBy: "Site Crew",
-        notes: project.code ? `Project ${project.code}` : null,
+        notes: composedNote,
         status,
         lines: cart,
       });
@@ -126,6 +165,8 @@ const Cart = () => {
             {missingPrice} Artikel ohne hinterlegten Lieferantenpreis — werden als „Preis auf Anfrage" gesendet.
           </div>
         )}
+
+        {/* Cart line items */}
         <div className="space-y-3">
           {cart.map((l) => (
             <QuantityRow
@@ -135,6 +176,19 @@ const Cart = () => {
               onRemove={() => removeFromCart(l.product.id)}
             />
           ))}
+        </div>
+
+        {/* Premium B2B procurement extras. All values are placeholders until
+            their respective backends are wired up. */}
+        <div className="mt-6 space-y-5">
+          <CartRecommendations />
+          <CartDeliveryCard />
+          <CartApprovalCard
+            threshold={minApproval > 0 ? minApproval : 100}
+            needsApproval={needsApproval}
+          />
+          <CartVolumeTiersCard />
+          <CartOrderMetaCard value={meta} onChange={setMeta} />
         </div>
       </main>
 
