@@ -45,6 +45,12 @@ export type DbProduct = {
   // Where `price` came from. Null when no price could be resolved.
   priceSource: PriceSource | null;
   supplierName: string | null;
+  // Original (non-project) list/contract price for the SAME supplier whose
+  // project price won. Only set when a project-specific override is in
+  // effect AND a contract price is also available — used to render a
+  // strikethrough "previous price" next to the Projektpreis badge so the
+  // user sees the negotiated saving. Null in every other case.
+  listPrice: number | null;
 };
 
 export const PRODUCT_TABLE = "normalized_products";
