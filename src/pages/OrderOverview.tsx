@@ -324,16 +324,27 @@ const OrderOverview = () => {
                           )}
                         </ul>
 
-                        <footer className="mt-2.5 flex items-center justify-between border-t border-border/60 pt-2">
+                        <footer className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
                           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                             {count} item{count === 1 ? "" : "s"}
                           </span>
-                          <button
-                            onClick={() => setSelected(o)}
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
-                          >
-                            <Eye className="h-3.5 w-3.5" /> Details
-                          </button>
+                          <div className="flex items-center gap-1">
+                            {isWithinCancelWindow(o.created_at) &&
+                              normalizeStatus(o.status) !== "delivered" && (
+                                <button
+                                  onClick={() => setCancelTarget(o)}
+                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
+                                >
+                                  <X className="h-3.5 w-3.5" /> Cancel
+                                </button>
+                              )}
+                            <button
+                              onClick={() => setSelected(o)}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
+                            >
+                              <Eye className="h-3.5 w-3.5" /> Details
+                            </button>
+                          </div>
                         </footer>
                       </article>
                     );
