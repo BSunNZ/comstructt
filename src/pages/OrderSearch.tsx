@@ -594,12 +594,22 @@ const OrderSearch = () => {
                       const inDraft = draft !== undefined;
 
                       if (!inDraft && qty === 0) {
-                        // Initial state: simple "+ ADD" button.
+                        // Initial state: "+ ADD" immediately drops 1 unit
+                        // into the cart AND opens the stepper so the user
+                        // can fine-tune the quantity afterwards. Previously
+                        // this only revealed the stepper without adding —
+                        // an extra tap users found unintuitive.
                         return (
                           <button
-                            onClick={() =>
-                              setDraftQtys((prev) => ({ ...prev, [p.id]: 1 }))
-                            }
+                            onClick={() => {
+                              addToCart(p, 1);
+                              flashJustAdded(p.id);
+                              setDraftQtys((prev) => ({ ...prev, [p.id]: 1 }));
+                              toast({
+                                title: "Item added",
+                                description: `1× ${p.name}`,
+                              });
+                            }}
                             className="tap-target mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5"
                           >
                             <Plus className="h-5 w-5" /> Add
