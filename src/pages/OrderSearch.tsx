@@ -41,12 +41,11 @@ const OrderSearch = () => {
   const updateQty = useApp((s) => s.updateQty);
   const project = PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0];
 
-  // Recently ordered on THIS site — pulled live from Supabase. Replaces the
-  // old hardcoded LAST_ORDER demo array. Section is hidden when empty.
-  const { items: recentOrdered, loading: recentLoading } = useRecentOrderedProducts(
-    projectId,
-    6,
-  );
+  // Recently ordered on THIS site — live 30-day history from Supabase.
+  // React Query cache is optimistically updated after checkout and then
+  // invalidated/refetched on createOrder success so the newest purchase
+  // appears immediately without a page reload.
+  const { items: recentOrdered, loading: recentLoading } = useRecentOrderedProducts(projectId, 8);
 
   const [q, setQ] = useState("");
   const [misuse, setMisuse] = useState<string | null>(null);
@@ -675,23 +674,32 @@ const OrderSearch = () => {
           </section>
         )}
 
-        {/* Last ordered on this site — 1-click reorder.
-            Hidden entirely when there is no order history yet. */}
-        {q.trim().length < 2 && (recentLoading || recentOrdered.length > 0) && (
+        {/* Last ordered on this site — top 8 distinct products from the last 30 days.
+            Hidden while the user is actively searching; shows a gentle CTA when empty. */}
+        {q.trim().length < 2 && (
           <section className="mt-6 space-y-3" aria-label="Recently ordered">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                 Recently ordered on this site
               </h2>
-              <Link to="/reorder" className="text-xs font-semibold text-primary">
-                View all
-              </Link>
+              {recentOrdered.length > 0 && (
+                <Link to="/reorder" className="text-xs font-semibold text-primary">
+                  View all
+                </Link>
+              )}
             </div>
 
             {recentLoading && recentOrdered.length === 0 ? (
               <div className="flex items-center gap-2 rounded-2xl bg-card p-4 text-sm text-muted-foreground shadow-rugged ring-1 ring-border">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Lade letzte Bestellungen…
+              </div>
+            ) : recentOrdered.length === 0 ? (
+              <div className="rounded-2xl bg-card p-4 shadow-rugged ring-1 ring-border">
+                <p className="text-sm font-semibold text-foreground">Start your first order</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Sobald auf dieser Baustelle bestellt wurde, erscheinen die letzten Produkte hier.
+                </p>
               </div>
             ) : (
               recentOrdered.map(({ product: p, lastQty }) => {
