@@ -14,7 +14,7 @@
  *
  * Required secrets: OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  *
- * Deploy trigger: 2026-04-19T12:00 — force redeploy after merging search/sync.
+ * Deploy trigger: 2026-04-19T12:45 — force redeploy after merging search/sync (v2).
  */
 // @ts-expect-error Deno std import resolved at edge runtime
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
