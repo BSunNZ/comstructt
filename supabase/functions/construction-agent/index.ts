@@ -147,26 +147,38 @@ serve(async (req: Request) => {
         typeof body.matchCount === "number" && Number.isFinite(body.matchCount)
           ? Math.min(5, Math.max(1, Math.round(body.matchCount as number)))
           : 3;
+      const matchThreshold =
+        typeof body.matchThreshold === "number" && Number.isFinite(body.matchThreshold)
+          ? Math.max(0, Math.min(1, body.matchThreshold as number))
+          : 0.3;
+
+      console.log("[construction-agent:search] query=", query, "areaM2=", areaM2, "threshold=", matchThreshold);
 
       const embedding = await embedText(OPENAI_API_KEY, query);
       if (!embedding) return jsonError(500, "Failed to embed query");
+      console.log("[construction-agent:search] embedding length=", embedding.length);
 
-      const { data: kitMatches, error: rpcErr } = await supabase.rpc("match_kits", {
-        query_embedding: embedding,
-        match_count: matchCount,
-      });
-      if (rpcErr) {
-        console.error("[construction-agent] match_kits error", rpcErr);
-        return jsonError(500, rpcErr.message);
+      const kitMatches = await callMatchKits(supabase, embedding, matchCount, matchThreshold);
+      console.log(
+        "[construction-agent:search] raw RPC matches=",
+        Array.isArray(kitMatches) ? kitMatches.length : "n/a",
+        Array.isArray(kitMatches)
+          ? kitMatches.map((k) => ({ slug: k.slug, sim: k.similarity }))
+          : kitMatches,
+      );
+      if (kitMatches === null) {
+        return jsonError(500, "match_kits RPC failed");
       }
 
       const kits = [];
-      for (const kit of (kitMatches ?? []) as Array<{
+      for (const kit of kitMatches as Array<{
         kit_id: string;
         slug: string;
         name: string;
         trade: string;
         description: string;
+        task_description?: string | null;
+        search_keywords?: string[] | null;
         similarity: number;
         items: Array<{
           product_id: string;
@@ -212,10 +224,28 @@ serve(async (req: Request) => {
         });
       }
 
-      return new Response(JSON.stringify({ kits }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      console.log(
+        "[construction-agent:search] returning kits=",
+        kits.length,
+        "with totalItems=",
+        kits.reduce((a, k) => a + k.items.length, 0),
+      );
+
+      return new Response(
+        JSON.stringify({
+          kits,
+          debug: {
+            query,
+            embeddingLength: embedding.length,
+            rawMatchCount: Array.isArray(kitMatches) ? kitMatches.length : 0,
+            threshold: matchThreshold,
+          },
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     // ----- ACTION: sync -----------------------------------------------------
