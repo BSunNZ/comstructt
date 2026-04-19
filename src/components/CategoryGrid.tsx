@@ -23,7 +23,7 @@ export const CategoryGrid = () => {
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-press">
               <c.icon className="h-6 w-6" strokeWidth={2.5} />
             </span>
-            <span className="text-[13px] font-bold leading-tight text-foreground break-words hyphens-auto px-0.5">
+            <span className="font-bold leading-tight text-foreground break-words hyphens-auto px-0.5 text-xs">
               {c.label}
             </span>
             <span className="line-clamp-2 text-[10px] leading-snug text-muted-foreground px-0.5">
