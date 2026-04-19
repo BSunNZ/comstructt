@@ -27,7 +27,8 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const BUILD_VERSION = "v5-2026-04-19T13:18:00Z";
+const BUILD_VERSION = "v6-2026-04-19T13:42:00Z";
+const DEFAULT_MATCH_THRESHOLD = 0.2;
 
 const SYSTEM_PROMPT = `You are an expert construction assistant helping a German construction crew on-site.
 
@@ -151,7 +152,7 @@ serve(async (req: Request) => {
       const matchThreshold =
         typeof body.matchThreshold === "number" && Number.isFinite(body.matchThreshold)
           ? Math.max(0, Math.min(1, body.matchThreshold as number))
-          : 0.3;
+          : DEFAULT_MATCH_THRESHOLD;
 
       console.log("[construction-agent:search] query=", query, "areaM2=", areaM2, "threshold=", matchThreshold);
 
@@ -168,7 +169,7 @@ serve(async (req: Request) => {
           : kitMatches,
       );
       if (kitMatches === null) {
-        return jsonError(500, "match_kits RPC failed");
+        return jsonError(502, "API Connection Error: match_kits RPC failed");
       }
 
       const kits = [];
@@ -239,6 +240,7 @@ serve(async (req: Request) => {
           embeddingLength: embedding.length,
           rawMatchCount: Array.isArray(kitMatches) ? kitMatches.length : 0,
           threshold: matchThreshold,
+          build: BUILD_VERSION,
         },
       });
     }
@@ -280,6 +282,10 @@ serve(async (req: Request) => {
         kits = (rich.data ?? []) as KitRow[];
       }
 
+      if (kits.length === 0) {
+        return jsonError(404, "No kits found to sync in public.kits");
+      }
+
       let synced = 0;
       let failed = 0;
       const errors: string[] = [];
@@ -313,6 +319,7 @@ serve(async (req: Request) => {
         failed,
         total: kits.length,
         errors: errors.length > 0 ? errors : undefined,
+        build: BUILD_VERSION,
       });
     }
 
@@ -551,7 +558,11 @@ async function embedText(apiKey: string, input: string): Promise<number[] | null
     body: JSON.stringify({ model: "text-embedding-3-small", input }),
   });
   if (!res.ok) {
-    console.error("[construction-agent] embed failed", res.status, await res.text());
+    const details = await res.text();
+    console.error("[construction-agent] embed failed", res.status, details);
+    if (res.status === 401 || res.status === 404) {
+      throw new Error(`OpenAI embedding request failed (${res.status})`);
+    }
     return null;
   }
   const json = await res.json();
@@ -796,4 +807,14 @@ function jsonOk(data: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function isBackendConfigError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("openai_api_key") ||
+    normalized.includes("service role") ||
+    normalized.includes("openai embedding request failed") ||
+    normalized.includes("api connection error")
+  );
 }

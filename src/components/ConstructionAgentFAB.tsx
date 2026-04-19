@@ -37,6 +37,7 @@ type KitResult = {
 };
 
 const SEARCH_DEBOUNCE_MS = 350;
+const SEARCH_MATCH_THRESHOLD = 0.2;
 
 export function ConstructionAgentFAB() {
   const projectId = useApp((s) => s.projectId);
@@ -91,7 +92,7 @@ export function ConstructionAgentFAB() {
           areaM2: areaM2 ?? undefined,
           projectId,
           matchCount: 3,
-          matchThreshold: 0.3,
+          matchThreshold: SEARCH_MATCH_THRESHOLD,
         },
       });
       if (id !== reqIdRef.current) return; // stale
@@ -129,12 +130,16 @@ export function ConstructionAgentFAB() {
           console.log("[ConstructionAgentFAB] backend debug=", (data as { debug: unknown }).debug);
         }
       }
+      if (kits.length === 0) {
+        setError(null);
+      }
       setResults(kits);
       setHasSearched(true);
     } catch (e) {
       if (id !== reqIdRef.current) return;
       console.error("[ConstructionAgentFAB] search error", e);
-      setError(e instanceof Error ? e.message : "Suche fehlgeschlagen");
+      const message = e instanceof Error ? e.message : "Suche fehlgeschlagen";
+      setError(mapAssistantError(message));
       setResults([]);
       setHasSearched(true);
     } finally {
@@ -279,9 +284,9 @@ export function ConstructionAgentFAB() {
 
             {!busy && !error && hasSearched && results.length === 0 && (
               <div className="rounded-xl bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">Kein Treffer über Schwellenwert</p>
+          <p className="font-medium text-foreground">Keine Kits gefunden</p>
                 <p className="mt-1 text-xs">
-                  Kein Kit-Vektor matched über 30%. Versuche andere Begriffe oder klicke „Sync",
+            Kein Kit-Vektor matched über 20%. Versuche andere Begriffe oder klicke „Sync",
                   falls du gerade Kits oder Keywords geändert hast.
                 </p>
               </div>
@@ -361,6 +366,21 @@ function parseArea(input: string): number | null {
   if (!cleaned) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function mapAssistantError(message: string): string {
+  const m = message.toLowerCase();
+  if (
+    m.includes("api connection error") ||
+    m.includes("openai_api_key") ||
+    m.includes("service role") ||
+    m.includes("openai embedding request failed") ||
+    m.includes("missing messages") ||
+    m.includes("failed to fetch")
+  ) {
+    return "API Connection Error";
+  }
+  return "Suche fehlgeschlagen";
 }
 
 /**
