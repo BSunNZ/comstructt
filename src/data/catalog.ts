@@ -11,6 +11,10 @@ export type Product = {
   category: string;
   subcategory?: string | null;
   tier?: "Good" | "Better" | "Best";
+  // Where `price` came from when this product was hydrated from
+  // supplier_product_mapping. Carried through into the cart + order_items
+  // so we have an audit trail for project-specific negotiated pricing.
+  priceSource?: "project" | "contract";
 };
 
 export type CartLine = {
