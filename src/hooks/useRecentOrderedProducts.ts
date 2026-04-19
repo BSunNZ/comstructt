@@ -203,5 +203,14 @@ export function useRecentOrderedProducts(projectId: string | null | undefined, l
         (current) => mergeRecentOrderedProducts(optimistic, current, limit),
       );
     },
+    // Clears the locally-cached "recently ordered" list for this project.
+    // We don't delete order history from the DB — this just empties the
+    // visible section until the next refetch (e.g. after a new order).
+    clearLocal: () => {
+      queryClient.setQueryData<RecentOrderedProduct[]>(
+        recentOrderedQueryKey(projectId, limit),
+        [],
+      );
+    },
   };
 }
