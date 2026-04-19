@@ -562,12 +562,22 @@ const OrderSearch = () => {
                           {p.sku} · {p.unit}
                         </p>
                         {p.price > 0 ? (
-                          <p className="mt-1 font-display text-xl text-foreground">
-                            €{p.price.toFixed(2)}
-                            <span className="ml-1 text-sm font-normal text-muted-foreground">
-                              / {p.unit}
-                            </span>
-                          </p>
+                          <div className="mt-1 flex flex-wrap items-baseline gap-2">
+                            <p className="font-display text-xl text-foreground">
+                              €{p.price.toFixed(2)}
+                              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                                / {p.unit}
+                              </span>
+                            </p>
+                            {p.priceSource === "project" && (
+                              <span
+                                className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary ring-1 ring-primary/30"
+                                title="Projekt-spezifischer Sonderpreis"
+                              >
+                                Projektpreis
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <p className="mt-1 font-display text-base text-muted-foreground">
                             Preis auf Anfrage
