@@ -237,6 +237,44 @@ const OrderOverview = () => {
       />
 
       <main className="mx-auto max-w-md px-4 pt-5 space-y-7">
+        {/* Status filter tabs — Rejected lives in its own bucket so the
+            standard Open/Delivered views don't get cluttered with declined
+            orders. */}
+        {!loading && !error && (
+          <div
+            role="tablist"
+            aria-label="Order status filter"
+            className="flex gap-1.5 overflow-x-auto rounded-2xl bg-muted p-1.5"
+          >
+            {TABS.map((tab) => {
+              const active = activeTab === tab.key;
+              const count = tab.sections.reduce((s, k) => s + grouped[k].length, 0);
+              return (
+                <button
+                  key={tab.key}
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold uppercase tracking-wider transition ${
+                    active
+                      ? "bg-card text-foreground shadow-press"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {tab.label}
+                  <span
+                    className={`ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${
+                      active ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {loading && (
           <div className="flex items-center justify-center gap-2 rounded-2xl bg-muted p-6 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" /> Loading orders…
@@ -247,7 +285,7 @@ const OrderOverview = () => {
           <div className="rounded-2xl bg-destructive/10 p-4 text-sm text-destructive">{error}</div>
         )}
 
-        {!loading && !error && SECTION_ORDER.map((k) => {
+        {!loading && !error && (TABS.find((t) => t.key === activeTab)?.sections ?? SECTION_ORDER).map((k) => {
           const meta = SECTION_META[k];
           const Icon = meta.Icon;
           const list = grouped[k];
