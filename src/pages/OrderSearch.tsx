@@ -7,7 +7,7 @@ import { isBanned, PROJECTS, Product } from "@/data/catalog";
 import { useRecentOrderedProducts } from "@/hooks/useRecentOrderedProducts";
 import { MisuseDialog } from "@/components/MisuseDialog";
 import { useSmartProductSearch, DbProduct } from "@/hooks/useSmartProductSearch";
-import { useVoiceInput } from "@/hooks/useVoiceInput";
+import { useWhisperVoiceInput as useVoiceInput } from "@/hooks/useWhisperVoiceInput";
 import { SubcategoryIcon } from "@/components/SubcategoryIcon";
 import { parseVoiceOrderMulti } from "@/lib/voiceOrderMulti";
 import { resolveVoiceProduct } from "@/lib/voiceOrderResolver";
@@ -339,7 +339,7 @@ const OrderSearch = () => {
     start: startVoice,
     stop: stopVoice,
   } = useVoiceInput({
-    lang: "de-DE",
+    lang: "de",
     onFinal: handleVoiceFinal,
   });
 
