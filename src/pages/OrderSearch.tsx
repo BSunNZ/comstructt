@@ -653,7 +653,7 @@ const OrderSearch = () => {
                 </p>
               </div>
             ) : (
-              recentOrdered.map(({ product: p, lastQty }) => {
+              recentOrdered.slice(0, 3).map(({ product: p, lastQty }) => {
                 const qty = qtyFor(p.id);
                 return (
                   <article
