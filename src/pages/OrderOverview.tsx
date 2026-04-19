@@ -11,6 +11,7 @@ import {
   listOrdersForProject,
   markDelivered,
   normalizeStatus,
+  resolveItemSupplier,
 } from "@/lib/orders";
 import { useApp } from "@/store/app";
 import { PROJECTS } from "@/data/catalog";
@@ -328,19 +329,32 @@ const OrderOverview = () => {
                             No items linked
                           </li>
                         ) : (
-                          items.slice(0, 3).map((it) => (
-                            <li
-                              key={it.id}
-                              className="flex items-center gap-2.5 rounded-lg bg-card/70 px-2.5 py-2"
-                            >
-                              <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold text-foreground ring-1 ring-border tabular-nums">
-                                {it.quantity.toLocaleString("de-DE")}×
-                              </span>
-                              <p className="line-clamp-2 min-w-0 flex-1 text-sm font-semibold leading-tight text-foreground break-words">
-                                {itemName(it)}
-                              </p>
-                            </li>
-                          ))
+                          items.slice(0, 3).map((it) => {
+                            const supplier = resolveItemSupplier(it, project.id);
+                            return (
+                              <li
+                                key={it.id}
+                                className="flex items-start gap-2.5 rounded-lg bg-card/70 px-2.5 py-2"
+                              >
+                                <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold text-foreground ring-1 ring-border tabular-nums">
+                                  {it.quantity.toLocaleString("de-DE")}×
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="line-clamp-2 text-sm font-semibold leading-tight text-foreground break-words">
+                                    {itemName(it)}
+                                  </p>
+                                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                    Lieferant:{" "}
+                                    {supplier ?? (
+                                      <span className="italic text-muted-foreground/70">
+                                        nicht verfügbar
+                                      </span>
+                                    )}
+                                  </p>
+                                </div>
+                              </li>
+                            );
+                          })
                         )}
                         {items.length > 3 && (
                           <li className="px-2.5 text-[11px] font-semibold text-muted-foreground">
@@ -429,29 +443,40 @@ const OrderOverview = () => {
                         No items linked to this order.
                       </li>
                     ) : (
-                      (selected.order_items ?? []).map((it) => (
-                        <li
-                          key={it.id}
-                          className="flex items-center gap-2.5 rounded-lg bg-muted px-2.5 py-2"
-                        >
-                          <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold ring-1 ring-border tabular-nums">
-                            {it.quantity.toLocaleString("de-DE")}×
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="line-clamp-2 text-sm font-semibold leading-tight">
-                              {itemName(it)}
-                            </p>
-                            {it.normalized_products?.unit && (
-                              <p className="text-[11px] text-muted-foreground">
-                                {it.normalized_products.unit}
-                                {it.normalized_products.category
-                                  ? ` · ${it.normalized_products.category}`
-                                  : ""}
+                      (selected.order_items ?? []).map((it) => {
+                        const supplier = resolveItemSupplier(it, project.id);
+                        return (
+                          <li
+                            key={it.id}
+                            className="flex items-start gap-2.5 rounded-lg bg-muted px-2.5 py-2"
+                          >
+                            <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold ring-1 ring-border tabular-nums">
+                              {it.quantity.toLocaleString("de-DE")}×
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-2 text-sm font-semibold leading-tight">
+                                {itemName(it)}
                               </p>
-                            )}
-                          </div>
-                        </li>
-                      ))
+                              {it.normalized_products?.unit && (
+                                <p className="text-[11px] text-muted-foreground">
+                                  {it.normalized_products.unit}
+                                  {it.normalized_products.category
+                                    ? ` · ${it.normalized_products.category}`
+                                    : ""}
+                                </p>
+                              )}
+                              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                Lieferant:{" "}
+                                {supplier ?? (
+                                  <span className="italic text-muted-foreground/70">
+                                    nicht verfügbar
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </li>
+                        );
+                      })
                     )}
                   </ul>
                 </div>
