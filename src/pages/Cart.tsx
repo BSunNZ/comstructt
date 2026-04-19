@@ -142,9 +142,7 @@ const Cart = () => {
         title="Your Cart"
         subtitle={`${cart.length} item${cart.length === 1 ? "" : "s"}`}
         back="/order/trade"
-      />
-      <main className="mx-auto max-w-md px-4 pt-5">
-        <div className="mb-3 flex justify-end">
+        right={
           <button
             type="button"
             onClick={() => {
@@ -155,12 +153,15 @@ const Cart = () => {
                 description: "All items removed.",
               });
             }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive"
+            className="inline-flex items-center gap-1.5 rounded-full border border-secondary-foreground/25 bg-secondary-foreground/10 px-3 py-1.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-destructive/20 hover:text-destructive-foreground"
+            aria-label="Clear cart"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Clear cart
+            Clear
           </button>
-        </div>
+        }
+      />
+      <main className="mx-auto max-w-md px-4 pt-4">
         {skippedCount > 0 && (
           <div className="mb-3 rounded-xl bg-warning/10 p-3 text-xs text-foreground ring-1 ring-warning/30">
             {skippedCount} item{skippedCount === 1 ? "" : "s"} from the demo catalog cannot be linked to the
