@@ -98,7 +98,10 @@ export const QuantitySelector = ({
           }
         }}
         aria-label={label}
-        className={`${heightCls} min-w-0 flex-1 rounded-lg bg-transparent text-center font-display ${fontCls} text-secondary-foreground outline-none [appearance:textfield] focus:ring-2 focus:ring-primary/40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
+        // Distinct lighter background + ring affords "click to type a number".
+        // The −/+ buttons sit on the dark `bg-secondary` rail; this input
+        // pops as a brighter, framed field so users see it as editable text.
+        className={`${heightCls} min-w-0 flex-1 cursor-text rounded-lg bg-secondary-foreground/10 text-center font-display ${fontCls} text-secondary-foreground outline-none ring-1 ring-secondary-foreground/25 transition hover:bg-secondary-foreground/15 focus:bg-secondary-foreground/20 focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
       />
       <button
         type="button"
