@@ -273,7 +273,7 @@ export function ConstructionAgentFAB() {
         type="button"
         aria-label="Open Construction Assistant"
         onClick={() => setOpen(true)}
-        className="absolute bottom-20 right-4 z-40 flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-primary-foreground shadow-lg shadow-primary/30 transition-transform hover:scale-105 active:scale-95"
+        className="absolute bottom-[85px] right-4 z-40 flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-primary-foreground shadow-lg shadow-primary/30 transition-transform hover:scale-105 active:scale-95"
       >
         <Sparkles className="h-5 w-5" />
         <span className="text-sm font-semibold">Bau-Assistent</span>
