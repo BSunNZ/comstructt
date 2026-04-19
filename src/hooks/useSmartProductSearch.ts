@@ -77,6 +77,20 @@ export function useSmartProductSearch(
           return;
         }
 
+        // One-time debug: log raw supplier_product_mapping for the first
+        // 2 rows so we can see whether the join surfaces supplier_id +
+        // suppliers.name. Remove this block once supplier display is
+        // verified end-to-end.
+        if (data && data.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const sample = (data as any[]).slice(0, 2).map((r) => ({
+            id: r.id,
+            product_name: r.product_name,
+            supplier_product_mapping: r.supplier_product_mapping,
+          }));
+          console.info("[search] supplier debug — raw rows", sample);
+        }
+
         // Pass active projectId so project_prices overrides apply.
         const enriched = (data ?? []).map((row) => enrichProduct(row, projectId));
 
