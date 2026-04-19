@@ -425,6 +425,20 @@ const OrderOverview = () => {
                           >
                             <Eye className="h-3.5 w-3.5" /> Details
                           </button>
+                          {normalizeStatus(o.status) === "ordered" && (
+                            <button
+                              onClick={() => handleDelivered(o)}
+                              disabled={updatingId === o.id}
+                              className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-bold uppercase tracking-wider text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                            >
+                              {updatingId === o.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              )}
+                              Geliefert
+                            </button>
+                          )}
                         </div>
                       </footer>
                     </article>
