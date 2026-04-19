@@ -7,8 +7,11 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev --workspace @comstruct/api\" \"npm run dev --workspace @comstruct/web\"",
-    "build": "npm run build --workspaces --if-present",
+    "dev": "vite",
+    "build": "vite build",
+    "build:dev": "vite build --mode development",
+    "preview": "vite preview",
+    "lint": "eslint .",
     "check": "npm run check --workspaces --if-present"
   },
   "devDependencies": {
