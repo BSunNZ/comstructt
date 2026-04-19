@@ -60,16 +60,12 @@ type ApprovalProps = {
   threshold: number;
   needsApproval: boolean;
   approver?: string;
-  sla?: string;
-  budgetOk?: boolean;
 };
 
 export const CartApprovalCard = ({
   threshold,
   needsApproval,
   approver = "Max Mustermann",
-  sla = "Freigabezeit < 2h",
-  budgetOk = true,
 }: ApprovalProps) => (
   <section
     aria-label="Freigabe"
@@ -107,136 +103,6 @@ export const CartApprovalCard = ({
           <p className="font-semibold leading-tight">{approver}</p>
         </div>
       </li>
-      <li className="flex items-center gap-3">
-        <span className="grid h-9 w-9 place-items-center rounded-lg bg-[hsl(var(--primary)/0.12)] text-primary">
-          <Clock className="h-4 w-4" />
-        </span>
-        <p className="font-semibold leading-tight">{sla}</p>
-      </li>
-      <li className="flex items-center gap-3">
-        <span className="grid h-9 w-9 place-items-center rounded-lg bg-[hsl(var(--primary)/0.12)] text-primary">
-          <Wallet className="h-4 w-4" />
-        </span>
-        <p className="font-semibold leading-tight">
-          {budgetOk ? "Budget verfügbar" : "Budget knapp"}
-        </p>
-      </li>
     </ul>
-  </section>
-);
-
-type Tier = { qty: number; price: number };
-type TierProps = {
-  tiers?: Tier[];
-  selectedQty?: number;
-  unit?: string;
-};
-
-const DEFAULT_TIERS: Tier[] = [
-  { qty: 100, price: 0.95 },
-  { qty: 500, price: 0.84 },
-  { qty: 1000, price: 0.8 },
-  { qty: 2000, price: 0.74 },
-];
-
-export const CartVolumeTiersCard = ({
-  tiers = DEFAULT_TIERS,
-  selectedQty = 1000,
-  unit = "Stk",
-}: TierProps) => (
-  <section
-    aria-label="Mengenpreise"
-    className="rounded-2xl bg-card p-4 shadow-rugged ring-1 ring-border"
-  >
-    <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-      Mengenpreise
-    </h2>
-    <ul className="grid grid-cols-2 gap-2">
-      {tiers.map((t) => {
-        const isSelected = t.qty === selectedQty;
-        return (
-          <li
-            key={t.qty}
-            className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-sm ring-1 transition ${
-              isSelected
-                ? "bg-primary text-primary-foreground ring-primary"
-                : "bg-background ring-border"
-            }`}
-          >
-            <span className="font-semibold">
-              {t.qty.toLocaleString("de-DE")} {unit}
-            </span>
-            <span
-              className={`font-display ${
-                isSelected ? "text-primary-foreground" : "text-foreground"
-              }`}
-            >
-              €{t.price.toFixed(2)}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
-    <p className="mt-2 text-[11px] text-muted-foreground">
-      Beispielpreise. Effektive Konditionen siehe Lieferantenvertrag.
-    </p>
-  </section>
-);
-
-export type OrderMeta = {
-  costCenter: string;
-  projectNumber: string;
-  note: string;
-};
-
-type MetaProps = {
-  value: OrderMeta;
-  onChange: (next: OrderMeta) => void;
-};
-
-export const CartOrderMetaCard = ({ value, onChange }: MetaProps) => (
-  <section
-    aria-label="Bestelldaten"
-    className="rounded-2xl bg-card p-4 shadow-rugged ring-1 ring-border"
-  >
-    <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-      Bestelldaten
-    </h2>
-    <div className="space-y-3">
-      <label className="block">
-        <span className="mb-1 block text-xs font-semibold text-muted-foreground">
-          Kostenstelle
-        </span>
-        <input
-          value={value.costCenter}
-          onChange={(e) => onChange({ ...value, costCenter: e.target.value })}
-          placeholder="z. B. KS-4711"
-          className="block h-11 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
-        />
-      </label>
-      <label className="block">
-        <span className="mb-1 block text-xs font-semibold text-muted-foreground">
-          Projektnummer
-        </span>
-        <input
-          value={value.projectNumber}
-          onChange={(e) => onChange({ ...value, projectNumber: e.target.value })}
-          placeholder="z. B. MTF-2024-01"
-          className="block h-11 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
-        />
-      </label>
-      <label className="block">
-        <span className="mb-1 block text-xs font-semibold text-muted-foreground">
-          Notiz
-        </span>
-        <textarea
-          value={value.note}
-          onChange={(e) => onChange({ ...value, note: e.target.value })}
-          placeholder="Optionale Anmerkung an den Lieferanten"
-          rows={3}
-          className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-        />
-      </label>
-    </div>
   </section>
 );
