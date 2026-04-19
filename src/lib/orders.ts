@@ -292,6 +292,48 @@ export async function confirmOrder(orderId: string): Promise<void> {
 }
 
 /**
+ * Hard-delete an order. order_items are removed via ON DELETE CASCADE.
+ * Caller is responsible for enforcing the 12-hour cancellation window.
+ */
+export async function cancelOrder(orderId: string): Promise<void> {
+  console.info("[orders] → DELETE cancel", { orderId });
+  // Defensive: explicitly remove children first in case the FK isn't cascading.
+  const { error: itemsErr } = await supabase
+    .from("order_items")
+    .delete()
+    .eq("order_id", orderId);
+  if (itemsErr) {
+    console.error("[orders] cancel: order_items delete failed", {
+      orderId,
+      code: itemsErr.code,
+      message: itemsErr.message,
+    });
+    throw itemsErr;
+  }
+  const { error } = await supabase.from("orders").delete().eq("id", orderId);
+  if (error) {
+    console.error("[orders] cancel failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    throw error;
+  }
+  console.info("[orders] ← cancel ok", { orderId });
+}
+
+/**
+ * Returns true if the order was created less than `windowHours` ago.
+ */
+export function isWithinCancelWindow(createdAt: string, windowHours = 12): boolean {
+  const created = new Date(createdAt).getTime();
+  if (!Number.isFinite(created)) return false;
+  const ageMs = Date.now() - created;
+  return ageMs >= 0 && ageMs < windowHours * 60 * 60 * 1000;
+}
+
+/**
  * Mark an "Ordered" order as delivered.
  */
 export async function markDelivered(orderId: string): Promise<void> {
