@@ -1,6 +1,7 @@
 import { Navigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
+import { CartBar } from "@/components/CartBar";
 import { findCategoryBySlug } from "@/data/categories";
 import { useApp } from "@/store/app";
 import { useProductsBySubcategory } from "@/hooks/useCategoryProducts";
@@ -62,6 +63,7 @@ const SubcategoryPage = () => {
           </div>
         )}
       </main>
+      <CartBar />
     </div>
   );
 };
