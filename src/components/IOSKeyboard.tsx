@@ -223,7 +223,9 @@ export const IOSKeyboard = ({ container }: Props) => {
     <div
       data-ios-keyboard
       onMouseDown={(e) => e.preventDefault()}
-      className="pointer-events-auto absolute inset-x-0 bottom-0 z-40 animate-slide-in-bottom select-none"
+      // z-[60] sits above any fixed bottom CTA bars (cart bar uses z-50)
+      // so the keyboard is never clipped by them during the demo.
+      className="pointer-events-auto absolute inset-x-0 bottom-0 z-[60] animate-slide-in-bottom select-none"
       style={{
         // Real iOS keyboard background — light grey with a subtle vertical wash.
         background: "linear-gradient(180deg,#D1D5DB 0%,#CBD0D6 100%)",
