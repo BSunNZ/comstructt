@@ -32,7 +32,7 @@ const Cart = () => {
     () => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0],
     [projectId],
   );
-  }, [project.code]);
+  
 
   // Fast workflow: an empty cart should never sit on /cart — bounce straight
   // back to the search page so the next add is one tap away. Skip the bounce
@@ -89,15 +89,7 @@ const Cart = () => {
       const liveTotal = cartTotal(cart);
       const status = decideInitialStatus(liveTotal, liveThreshold);
 
-      // Stitch user-entered metadata into the notes column so the data
-      // survives even before we add dedicated columns for it.
-      const noteParts = [
-        meta.projectNumber ? `Projekt ${meta.projectNumber}` : null,
-        meta.costCenter ? `Kostenstelle ${meta.costCenter}` : null,
-        meta.note?.trim() ? meta.note.trim() : null,
-      ].filter(Boolean);
-      const composedNote =
-        noteParts.length > 0 ? noteParts.join(" · ") : project.code ? `Project ${project.code}` : null;
+      const composedNote = project.code ? `Project ${project.code}` : null;
 
       const optimisticRecent = buildOptimisticRecentProducts(cart);
       queryClient.setQueryData<RecentOrderedProduct[]>(
@@ -188,8 +180,6 @@ const Cart = () => {
             threshold={minApproval > 0 ? minApproval : 100}
             needsApproval={needsApproval}
           />
-          <CartVolumeTiersCard />
-          <CartOrderMetaCard value={meta} onChange={setMeta} />
         </div>
       </main>
 
