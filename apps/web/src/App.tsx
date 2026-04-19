@@ -2693,6 +2693,10 @@ export default function App() {
                     className="upload-form"
                     onSubmit={(event) => {
                       event.preventDefault();
+                      if (selectedPdfFile && !selectedFile) {
+                        void uploadPdf();
+                        return;
+                      }
                       void uploadCsv();
                     }}
                   >
@@ -2715,17 +2719,13 @@ export default function App() {
                     </label>
 
                     <div className="button-row">
-                      <button type="submit" disabled={isUploading || !selectedFile} className="btn-primary">
+                      <button
+                        type="submit"
+                        disabled={isUploading || (!selectedFile && !selectedPdfFile)}
+                        className="btn-primary"
+                      >
                         {isUploading ? "Building preview..." : "Create preview"}
-                  </button>
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    disabled={isUploading || !selectedPdfFile}
-                    onClick={() => void uploadPdf()}
-                  >
-                    {isUploading ? "Building preview..." : "Create PDF preview"}
-                  </button>
+                      </button>
                   <button
                     type="button"
                     className="button-secondary"
@@ -3006,7 +3006,10 @@ export default function App() {
                   </label>
 
                   <div className="button-row">
-                    <button type="submit" disabled={isProjectPriceUploading}>
+                    <button
+                      type="submit"
+                      disabled={isProjectPriceUploading || !selectedProjectPriceFile}
+                    >
                       {isProjectPriceUploading ? "Matching prices..." : "Preview project prices"}
                     </button>
                     <button
