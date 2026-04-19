@@ -64,8 +64,7 @@ export function useOrderNotifications() {
     const channel = supabase
       .channel(`notifications:project:${projectId}`)
       .on(
-        // @ts-expect-error supabase-js generic types omit the postgres_changes literal
-        "postgres_changes",
+        "postgres_changes" as never,
         {
           event: "INSERT",
           schema: "public",
