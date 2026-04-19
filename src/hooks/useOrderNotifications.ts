@@ -61,28 +61,32 @@ export function useOrderNotifications() {
       hydratedRef.current = true;
     })();
 
-    const channel = supabase
-      .channel(`notifications:project:${projectId}:${Math.random().toString(36).slice(2)}`)
-      .on(
-        "postgres_changes" as never,
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "notifications",
-          filter: `project_id=eq.${projectId}`,
-        },
-        (payload: { new: DbNotification }) => {
-          const n = payload.new;
-          pushNew(n);
-          if (toastedRef.current.has(n.id)) return;
-          toastedRef.current.add(n.id);
-          showOrderToast(n, () => {
-            if (n.order_id) nav(`/order/status?focus=${n.order_id}`);
-            else nav("/notifications");
-          });
-        },
-      )
-      .subscribe();
+    // Build the channel and attach the listener BEFORE calling subscribe().
+    // Supabase forbids adding `postgres_changes` callbacks after subscribe(),
+    // and StrictMode's double-invoke can otherwise hit that path.
+    const channel = supabase.channel(
+      `notifications:project:${projectId}:${Math.random().toString(36).slice(2)}`,
+    );
+    channel.on(
+      "postgres_changes" as never,
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "notifications",
+        filter: `project_id=eq.${projectId}`,
+      },
+      (payload: { new: DbNotification }) => {
+        const n = payload.new;
+        pushNew(n);
+        if (toastedRef.current.has(n.id)) return;
+        toastedRef.current.add(n.id);
+        showOrderToast(n, () => {
+          if (n.order_id) nav(`/order/status?focus=${n.order_id}`);
+          else nav("/notifications");
+        });
+      },
+    );
+    channel.subscribe();
 
     return () => {
       cancelled = true;
