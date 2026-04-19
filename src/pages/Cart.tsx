@@ -165,7 +165,7 @@ const Cart = () => {
         </div>
         <button
           onClick={submit}
-          disabled={submitting}
+          disabled={submitting || linkableCount === 0}
           className="tap-target flex h-16 w-full items-center justify-center gap-2 rounded-2xl bg-primary text-lg font-bold uppercase tracking-wider text-primary-foreground shadow-rugged active:translate-y-0.5 active:shadow-press disabled:opacity-60"
         >
           {submitting ? (
