@@ -596,9 +596,7 @@ const OrderSearch = () => {
                       if (!inDraft && qty === 0) {
                         // Initial state: "+ ADD" immediately drops 1 unit
                         // into the cart AND opens the stepper so the user
-                        // can fine-tune the quantity afterwards. Previously
-                        // this only revealed the stepper without adding —
-                        // an extra tap users found unintuitive.
+                        // can fine-tune the quantity afterwards.
                         return (
                           <button
                             onClick={() => {
@@ -606,7 +604,8 @@ const OrderSearch = () => {
                               flashJustAdded(p.id);
                               setDraftQtys((prev) => ({ ...prev, [p.id]: 1 }));
                               toast({
-                                title: "Item added",
+                                variant: "success",
+                                title: "Added to cart",
                                 description: `1× ${p.name}`,
                               });
                             }}
@@ -617,52 +616,34 @@ const OrderSearch = () => {
                         );
                       }
 
-                      // Engaged state — either the user pressed "+ ADD"
-                      // (draft set) or the product is already in the cart.
-                      // Default the selector to 1 in the latter case so the
-                      // user can immediately add more units.
-                      const selectorQty = inDraft ? draft : 1;
-                      const flashed = !!justAdded[p.id];
+                      // Engaged state — once the user has added the
+                      // product, the card collapses to ONLY the quantity
+                      // stepper. Tapping +/− on the stepper writes
+                      // directly to the cart so the user never has to
+                      // move their finger to a separate "Add to cart"
+                      // button. Confirmation lives in the green toast at
+                      // the top of the screen instead.
+                      const selectorQty = inDraft ? draft : qty;
 
                       return (
-                        <div className="mt-3 flex flex-col gap-3">
-                          <button
-                            onClick={() => {
-                              if (selectorQty <= 0) return;
-                              addToCart(p, selectorQty);
-                              flashJustAdded(p.id);
-                              // Persist the draft so the selector stays
-                              // visible and ready for another tap. Do NOT
-                              // clear it — that would collapse the layout.
-                              setDraftQtys((prev) => ({ ...prev, [p.id]: selectorQty }));
-                              toast({
-                                title: "Item added",
-                                description: `${selectorQty}× ${p.name}`,
-                              });
-                            }}
-                            disabled={selectorQty <= 0}
-                            aria-live="polite"
-                            className={`tap-target flex h-14 w-full items-center justify-center gap-2 rounded-xl text-base font-bold uppercase tracking-wider shadow-press active:translate-y-0.5 disabled:opacity-50 disabled:active:translate-y-0 ${
-                              flashed
-                                ? "bg-[hsl(var(--success,142_71%_45%))] text-primary-foreground"
-                                : "bg-primary text-primary-foreground"
-                            }`}
-                          >
-                            {flashed ? (
-                              <>
-                                <Check className="h-5 w-5" /> Added!
-                              </>
-                            ) : (
-                              <>
-                                <ShoppingCart className="h-5 w-5" /> Add to cart
-                              </>
-                            )}
-                          </button>
+                        <div className="mt-3 flex flex-col gap-2">
                           <QuantitySelector
                             qty={selectorQty}
-                            onChange={(n) =>
-                              setDraftQtys((prev) => ({ ...prev, [p.id]: Math.max(0, n) }))
-                            }
+                            onChange={(n) => {
+                              const next = Math.max(0, n);
+                              setDraftQtys((prev) => ({ ...prev, [p.id]: next }));
+                              // Mirror the change into the cart in real
+                              // time so +/− behave like add/remove.
+                              updateQty(p.id, next);
+                              if (next > qty) {
+                                flashJustAdded(p.id);
+                                toast({
+                                  variant: "success",
+                                  title: "Added to cart",
+                                  description: `${next}× ${p.name}`,
+                                });
+                              }
+                            }}
                             size="lg"
                             label={p.name}
                           />
