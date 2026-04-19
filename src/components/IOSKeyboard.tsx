@@ -147,7 +147,12 @@ export const IOSKeyboard = ({ container }: Props) => {
   // Push content up while keyboard is visible.
   useEffect(() => {
     if (!container) return;
-    const KB_HEIGHT = layout === "numeric" ? 260 : 291;
+    // Measured from the actual rendered keyboard:
+    //   pt(6) + 4×row(42) + 3×gap(11) + pb(8) + home-indicator wrapper(mt 8 + 5) = 228
+    // Using the exact pixel value keeps the cart bar (positioned at
+    // `bottom: var(--ios-kb-h)`) flush against the keyboard's top edge
+    // with no see-through gap. Numeric layout uses the same row count.
+    const KB_HEIGHT = 228;
     container.style.setProperty("--ios-kb-h", target ? `${KB_HEIGHT}px` : "0px");
     // Boolean flag (0 / 1) so consumers can toggle padding without JS —
     // used by the cart bar to collapse its safe-area pb when the keys are up.
