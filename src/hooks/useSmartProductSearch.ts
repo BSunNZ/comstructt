@@ -22,7 +22,11 @@ export type SmartSearchState = {
   configured: boolean;
 };
 
-export function useSmartProductSearch(query: string, limit = 20): SmartSearchState {
+export function useSmartProductSearch(
+  query: string,
+  limit = 20,
+  projectId: string | null | undefined = null,
+): SmartSearchState {
   const [state, setState] = useState<SmartSearchState>({
     results: [],
     loading: false,
@@ -73,7 +77,8 @@ export function useSmartProductSearch(query: string, limit = 20): SmartSearchSta
           return;
         }
 
-        const enriched = (data ?? []).map(enrichProduct);
+        // Pass active projectId so project_prices overrides apply.
+        const enriched = (data ?? []).map((row) => enrichProduct(row, projectId));
 
         const ranked = enriched
           .map((p) => ({ p, score: scoreProduct(p, tokens) }))
@@ -91,7 +96,7 @@ export function useSmartProductSearch(query: string, limit = 20): SmartSearchSta
     }, 300);
 
     return () => window.clearTimeout(handle);
-  }, [query, limit]);
+  }, [query, limit, projectId]);
 
   return state;
 }
