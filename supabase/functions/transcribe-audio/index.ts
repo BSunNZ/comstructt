@@ -151,7 +151,8 @@ serve(async (req: Request) => {
     }
 
     const data = (await whisperRes.json()) as { text?: string };
-    return new Response(JSON.stringify({ text: data.text ?? "" }), {
+    const cleaned = normalizeCommandWords(data.text ?? "");
+    return new Response(JSON.stringify({ text: cleaned }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
