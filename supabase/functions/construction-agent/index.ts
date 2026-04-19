@@ -1,30 +1,17 @@
 /**
- * construction-agent
+ * construction-agent (multi-action)
  * ----------------------------------------------------------------------------
- * Agentic chat endpoint powered by GPT-4o-mini with one tool:
- *   - search_database_for_kits(task_description, area_m2?) → embeds the query
- *     with text-embedding-3-small, calls the `match_kits` Postgres RPC
- *     (pgvector cosine similarity), then RESOLVES every kit_items.product_name
- *     against `normalized_products` (ILIKE) so we always return real product
- *     UUIDs the client can drop straight into the cart.
+ * Single edge function that handles three actions, dispatched by `action` in
+ * the request body. Merged here because the Supabase CLI is unavailable on
+ * the user's machine and only this function is reliably deployed.
  *
- * Response shape (NEW — structured):
- *   {
- *     reply: string,                 // markdown answer for the chat bubble
- *     recommendations?: [{           // when a kit was matched + sized
- *       productId, name, sku, unit, quantity,
- *       unitPrice, supplier, category, subcategory,
- *       priceSource: "project" | "contract" | null,
- *       listPrice
- *     }]
- *   }
+ *   action: "chat"   (default) — agentic GPT-4o-mini chat with search tool.
+ *   action: "search"           — direct semantic kit search (no LLM loop).
+ *   action: "sync"             — regenerate OpenAI embeddings for all kits.
  *
- * Important guard from the system prompt: if the user asks for "drywall"
- * without a size, the model is instructed to ask back for m² before
- * recommending quantities.
+ * All three share the same OpenAI + Supabase clients and helper utilities
+ * (embed query, match_kits RPC, resolve product, project-aware pricing).
  *
- * Deploy:
- *   supabase functions deploy construction-agent --no-verify-jwt
  * Required secrets: OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  */
 // @ts-expect-error Deno std import resolved at edge runtime
@@ -107,9 +94,6 @@ type RecommendationOut = {
   listPrice: number | null;
 };
 
-// Module-level cache so the resolved recommendations from the most recent
-// tool call are attached to the final HTTP response. We rebuild it on
-// every request so concurrent invocations don't cross-pollute.
 type AgentState = { recommendations: RecommendationOut[] | null };
 
 serve(async (req: Request) => {
@@ -130,34 +114,196 @@ serve(async (req: Request) => {
       return jsonError(500, "Supabase service role credentials are not configured");
     }
 
-    let body: { messages?: ChatMessage[]; projectId?: string | null } = {};
+    let body: Record<string, unknown> = {};
     try {
       const raw = await req.text();
       if (!raw || !raw.trim()) {
-        return jsonError(400, "Request body is empty. Expected JSON: { messages: [...] }");
+        return jsonError(400, "Request body is empty.");
       }
       body = JSON.parse(raw);
     } catch (parseErr) {
       console.error("[construction-agent] failed to parse JSON body", parseErr);
       return jsonError(400, "Invalid JSON in request body");
     }
-    if (!Array.isArray(body.messages) || body.messages.length === 0) {
-      return jsonError(400, "Missing 'messages' array in request body");
-    }
 
-    const projectId = typeof body.projectId === "string" ? body.projectId : null;
+    const action = typeof body.action === "string" ? body.action : "chat";
 
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
 
+    // ----- ACTION: search ---------------------------------------------------
+    if (action === "search") {
+      const query = typeof body.query === "string" ? body.query.trim() : "";
+      if (!query) return jsonError(400, "Missing 'query' for search action");
+      const projectId = typeof body.projectId === "string" ? body.projectId : null;
+      const areaM2 =
+        typeof body.areaM2 === "number" && Number.isFinite(body.areaM2) && body.areaM2 > 0
+          ? (body.areaM2 as number)
+          : null;
+      const matchCount =
+        typeof body.matchCount === "number" && Number.isFinite(body.matchCount)
+          ? Math.min(5, Math.max(1, Math.round(body.matchCount as number)))
+          : 3;
+
+      const embedding = await embedText(OPENAI_API_KEY, query);
+      if (!embedding) return jsonError(500, "Failed to embed query");
+
+      const { data: kitMatches, error: rpcErr } = await supabase.rpc("match_kits", {
+        query_embedding: embedding,
+        match_count: matchCount,
+      });
+      if (rpcErr) {
+        console.error("[construction-agent] match_kits error", rpcErr);
+        return jsonError(500, rpcErr.message);
+      }
+
+      const kits = [];
+      for (const kit of (kitMatches ?? []) as Array<{
+        kit_id: string;
+        slug: string;
+        name: string;
+        trade: string;
+        description: string;
+        similarity: number;
+        items: Array<{
+          product_id: string;
+          product_name: string;
+          unit: string;
+          per_m2: number | null;
+          base_qty: number;
+        }>;
+      }>) {
+        const items: RecommendationOut[] = [];
+        const unmatched: string[] = [];
+        for (const it of kit.items ?? []) {
+          const qty = computeQuantity(it.per_m2, it.base_qty, areaM2);
+          if (qty <= 0) continue;
+          const resolved = await resolveProduct(supabase, it.product_name, projectId);
+          if (!resolved) {
+            unmatched.push(it.product_name);
+            continue;
+          }
+          items.push({
+            productId: resolved.id,
+            name: resolved.product_name ?? it.product_name,
+            sku: resolved.family_key ?? null,
+            unit: it.unit || resolved.unit || "Stk",
+            quantity: qty,
+            unitPrice: resolved.price,
+            supplier: resolved.supplierName,
+            category: resolved.category,
+            subcategory: resolved.subcategory,
+            priceSource: resolved.priceSource,
+            listPrice: resolved.listPrice,
+          });
+        }
+        kits.push({
+          kitId: kit.kit_id,
+          slug: kit.slug,
+          name: kit.name,
+          trade: kit.trade,
+          description: kit.description,
+          similarity: kit.similarity,
+          items,
+          unmatched,
+        });
+      }
+
+      return new Response(JSON.stringify({ kits }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ----- ACTION: sync -----------------------------------------------------
+    if (action === "sync") {
+      type KitRow = {
+        id: string;
+        slug: string;
+        name: string;
+        trade: string | null;
+        description: string | null;
+        keywords: string[] | null;
+        search_keywords: string[] | string | null;
+        task_description: string | null;
+      };
+
+      let kits: KitRow[] = [];
+      const rich = await supabase
+        .from("kits")
+        .select("id, slug, name, trade, description, keywords, search_keywords, task_description");
+      if (rich.error) {
+        console.warn("[construction-agent:sync] rich select failed, falling back:", rich.error.message);
+        const fallback = await supabase
+          .from("kits")
+          .select("id, slug, name, trade, description, keywords");
+        if (fallback.error) return jsonError(500, fallback.error.message);
+        kits = (fallback.data ?? []).map((r: Record<string, unknown>) => ({
+          id: String(r.id),
+          slug: String(r.slug),
+          name: String(r.name),
+          trade: (r.trade as string) ?? null,
+          description: (r.description as string) ?? null,
+          keywords: (r.keywords as string[]) ?? null,
+          search_keywords: null,
+          task_description: null,
+        }));
+      } else {
+        kits = (rich.data ?? []) as KitRow[];
+      }
+
+      let synced = 0;
+      let failed = 0;
+      const errors: string[] = [];
+      for (const kit of kits) {
+        try {
+          const text = buildEmbeddingText(kit);
+          const embedding = await embedText(OPENAI_API_KEY, text);
+          if (!embedding) {
+            failed++;
+            errors.push(`${kit.slug}: empty embedding response`);
+            continue;
+          }
+          const { error: updateErr } = await supabase
+            .from("kits")
+            .update({ embedding })
+            .eq("id", kit.id);
+          if (updateErr) {
+            failed++;
+            errors.push(`${kit.slug}: ${updateErr.message}`);
+          } else {
+            synced++;
+          }
+        } catch (e) {
+          failed++;
+          errors.push(`${kit.slug}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          synced,
+          failed,
+          total: kits.length,
+          errors: errors.length > 0 ? errors : undefined,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // ----- ACTION: chat (default) ------------------------------------------
+    const messages = body.messages as ChatMessage[] | undefined;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return jsonError(400, "Missing 'messages' array in request body");
+    }
+    const projectId = typeof body.projectId === "string" ? body.projectId : null;
+
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     const conversation: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
-      ...body.messages,
+      ...messages,
     ];
-
-    // Per-request state — last successful tool call's resolved items.
     const state: AgentState = { recommendations: null };
 
     const MAX_TOOL_ITERATIONS = 3;
@@ -218,21 +364,17 @@ serve(async (req: Request) => {
         }
 
         const toolResult = await runMatchKits(
-          openai,
+          OPENAI_API_KEY,
           supabase,
           taskDescription,
           areaM2,
           projectId,
         );
 
-        // Stash the resolved recommendations so we can return them to the
-        // client alongside the model's final natural-language reply.
         if (toolResult.recommendations && toolResult.recommendations.length > 0) {
           state.recommendations = toolResult.recommendations;
         }
 
-        // Send a leaner payload back to the model — it only needs to know
-        // names + quantities to write the reply, not full UUIDs.
         const modelView = {
           kitName: toolResult.kitName,
           trade: toolResult.trade,
@@ -266,10 +408,7 @@ serve(async (req: Request) => {
         reply: finalText,
         recommendations: state.recommendations ?? undefined,
       }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
     console.error("[construction-agent] error", e);
@@ -278,7 +417,7 @@ serve(async (req: Request) => {
 });
 
 async function runMatchKits(
-  openai: OpenAI,
+  openaiApiKey: string,
   // deno-lint-ignore no-explicit-any
   supabase: any,
   taskDescription: string,
@@ -292,12 +431,7 @@ async function runMatchKits(
   unmatched: string[];
   message?: string;
 }> {
-  // 1. Embed task and run pgvector cosine similarity.
-  const embedRes = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: taskDescription,
-  });
-  const embedding = embedRes.data[0]?.embedding;
+  const embedding = await embedText(openaiApiKey, taskDescription);
   if (!embedding) {
     return {
       kitName: null,
@@ -351,10 +485,6 @@ async function runMatchKits(
   const recommendations: RecommendationOut[] = [];
   const unmatched: string[] = [];
 
-  // 2. For every kit item, resolve the real product row by name. We only
-  //    use kit_items.product_name (the demo product_id strings are not
-  //    real UUIDs in normalized_products). ILIKE on product_name with a
-  //    fallback to family_name keeps it tolerant of small naming drifts.
   for (const item of kit.items) {
     const qty = computeQuantity(item.per_m2, item.base_qty, areaM2);
     if (qty <= 0) continue;
@@ -389,7 +519,58 @@ async function runMatchKits(
   };
 }
 
-/** Round up to whole units, falling back to base_qty when no area given. */
+async function embedText(apiKey: string, input: string): Promise<number[] | null> {
+  const res = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: "text-embedding-3-small", input }),
+  });
+  if (!res.ok) {
+    console.error("[construction-agent] embed failed", res.status, await res.text());
+    return null;
+  }
+  const json = await res.json();
+  return json?.data?.[0]?.embedding ?? null;
+}
+
+function buildEmbeddingText(kit: {
+  name: string;
+  trade: string | null;
+  description: string | null;
+  task_description: string | null;
+  search_keywords: string[] | string | null;
+  keywords: string[] | null;
+}): string {
+  const parts: string[] = [];
+  if (kit.name) parts.push(kit.name);
+  if (kit.trade) parts.push(kit.trade);
+  if (kit.task_description) parts.push(kit.task_description);
+  if (kit.description) parts.push(kit.description);
+
+  const sk = normalizeKeywordList(kit.search_keywords);
+  if (sk.length > 0) parts.push(sk.join(", "));
+
+  const legacyKw = normalizeKeywordList(kit.keywords);
+  if (legacyKw.length > 0) parts.push(legacyKw.join(", "));
+
+  return parts.filter(Boolean).join(". ");
+}
+
+function normalizeKeywordList(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 function computeQuantity(
   perM2: number | null,
   baseQty: number,
@@ -415,7 +596,6 @@ type ResolvedProduct = {
   listPrice: number | null;
 };
 
-/** Find a real normalized_products row whose name best matches `name`. */
 async function resolveProduct(
   // deno-lint-ignore no-explicit-any
   supabase: any,
@@ -425,7 +605,6 @@ async function resolveProduct(
   const select =
     "id, product_name, family_name, family_key, unit, category, subcategory, supplier_product_mapping(contract_price, project_prices, supplier_id, suppliers(name))";
 
-  // Try a few progressively looser ilike patterns.
   const patterns = buildIlikePatterns(name);
 
   for (const pattern of patterns) {
@@ -461,7 +640,6 @@ async function resolveProduct(
   return null;
 }
 
-/** Build ilike patterns: full string → first 3 significant tokens → first token. */
 function buildIlikePatterns(name: string): string[] {
   const escaped = name.replace(/[%_,()]/g, (m) => `\\${m}`);
   const tokens = name
@@ -483,7 +661,6 @@ type SupplierMappingRow = {
   suppliers?: { name: string | null } | null;
 };
 
-/** Same project-aware pricing rule used by the frontend (productSearch.ts). */
 function pickBestPrice(
   rows: SupplierMappingRow[] | null | undefined,
   projectId: string | null,
