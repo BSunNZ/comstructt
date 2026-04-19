@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { orderItemsTotal } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
-import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, ClipboardCheck, X } from "lucide-react";
+import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban } from "lucide-react";
 import {
   DbOrder,
   DbOrderItem,
   DbOrderStatus,
   cancelOrder,
-  confirmOrder,
   isWithinCancelWindow,
   listOrdersForProject,
   markDelivered,
@@ -34,7 +33,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 
-type SectionKey = "Requested" | "Ordered" | "Delivered";
+type SectionKey = "Requested" | "Ordered" | "Delivered" | "Rejected";
+type TabKey = "all" | "open" | "delivered" | "rejected";
 
 const SECTION_META: Record<
   SectionKey,
@@ -91,9 +91,29 @@ const SECTION_META: Record<
     badgeBg: "bg-[hsl(140_60%_45%/0.22)]",
     badgeText: "text-[hsl(140_55%_22%)]",
   },
+  Rejected: {
+    label: "Abgelehnt",
+    description: "Vom Procurement abgelehnt · keine Lieferung",
+    Icon: Ban,
+    matches: ["rejected"],
+    headerBg: "bg-[hsl(0_85%_55%/0.18)]",
+    headerText: "text-[hsl(0_75%_32%)]",
+    accentDot: "bg-[hsl(0_85%_50%)]",
+    cardBg: "bg-[hsl(0_85%_97%)]",
+    cardRing: "ring-[hsl(0_75%_78%)]",
+    badgeBg: "bg-[hsl(0_85%_55%/0.22)]",
+    badgeText: "text-[hsl(0_75%_32%)]",
+  },
 };
 
-const SECTION_ORDER: SectionKey[] = ["Requested", "Ordered", "Delivered"];
+const SECTION_ORDER: SectionKey[] = ["Requested", "Ordered", "Delivered", "Rejected"];
+
+const TABS: { key: TabKey; label: string; sections: SectionKey[] }[] = [
+  { key: "all", label: "Alle", sections: ["Requested", "Ordered", "Delivered", "Rejected"] },
+  { key: "open", label: "Offen", sections: ["Requested", "Ordered"] },
+  { key: "delivered", label: "Geliefert", sections: ["Delivered"] },
+  { key: "rejected", label: "Abgelehnt", sections: ["Rejected"] },
+];
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
