@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { orderItemsTotal } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
-import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, ClipboardCheck } from "lucide-react";
+import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, ClipboardCheck, X } from "lucide-react";
 import {
   DbOrder,
   DbOrderItem,
   DbOrderStatus,
+  cancelOrder,
   confirmOrder,
+  isWithinCancelWindow,
   listOrdersForProject,
   markDelivered,
   normalizeStatus,
@@ -20,6 +22,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 
 type SectionKey = "Requested" | "Ordered" | "Delivered";
@@ -105,6 +117,7 @@ const OrderOverview = () => {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<DbOrder | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<DbOrder | null>(null);
 
   const refresh = async (alive: () => boolean = () => true) => {
     try {
@@ -162,6 +175,26 @@ const OrderOverview = () => {
       const err = e as { code?: string; message?: string };
       toast({
         title: `Failed to update${err?.code ? ` [${err.code}]` : ""}`,
+        description: err?.message ?? "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleCancel = async (o: DbOrder) => {
+    setUpdatingId(o.id);
+    try {
+      await cancelOrder(o.id);
+      toast({ title: "Order cancelled successfully" });
+      setSelected((s) => (s && s.id === o.id ? null : s));
+      setCancelTarget(null);
+      await refresh();
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      toast({
+        title: `Failed to cancel${err?.code ? ` [${err.code}]` : ""}`,
         description: err?.message ?? "Please try again.",
         variant: "destructive",
       });
@@ -291,16 +324,27 @@ const OrderOverview = () => {
                           )}
                         </ul>
 
-                        <footer className="mt-2.5 flex items-center justify-between border-t border-border/60 pt-2">
+                        <footer className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
                           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                             {count} item{count === 1 ? "" : "s"}
                           </span>
-                          <button
-                            onClick={() => setSelected(o)}
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
-                          >
-                            <Eye className="h-3.5 w-3.5" /> Details
-                          </button>
+                          <div className="flex items-center gap-1">
+                            {isWithinCancelWindow(o.created_at) &&
+                              normalizeStatus(o.status) !== "delivered" && (
+                                <button
+                                  onClick={() => setCancelTarget(o)}
+                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
+                                >
+                                  <X className="h-3.5 w-3.5" /> Cancel
+                                </button>
+                              )}
+                            <button
+                              onClick={() => setSelected(o)}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
+                            >
+                              <Eye className="h-3.5 w-3.5" /> Details
+                            </button>
+                          </div>
                         </footer>
                       </article>
                     );
@@ -421,6 +465,41 @@ const OrderOverview = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!cancelTarget} onOpenChange={(o) => !o && setCancelTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this order?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancelTarget && (
+                <>
+                  Order <span className="font-semibold">{shortId(cancelTarget.id)}</span> will be
+                  permanently removed. This cannot be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updatingId === cancelTarget?.id}>
+              Keep order
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (cancelTarget) handleCancel(cancelTarget);
+              }}
+              disabled={updatingId === cancelTarget?.id}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {updatingId === cancelTarget?.id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Yes, cancel order"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
