@@ -14,7 +14,10 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
+      // Anchored to the TOP of the nearest positioned ancestor (the
+      // .phone-shell on desktop, the window on mobile) so the toast
+      // appears as a notification banner inside the iPhone frame.
+      "absolute top-2 inset-x-0 z-[100] mx-auto flex max-h-screen w-full max-w-[calc(100%-1rem)] flex-col gap-2 px-2",
       className,
     )}
     {...props}
@@ -23,7 +26,12 @@ const ToastViewport = React.forwardRef<
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName;
 
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border p-6 pr-8 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-top-full data-[state=open]:sm:slide-in-from-bottom-full",
+  // Custom transitions:
+  //   open  → slide-in from top + fade-in (300ms via animate-in defaults)
+  //   close → fade-out over 1000ms (matches the user's spec: "fading out for 1s")
+  // We deliberately drop the slide-out-to-right used by the shadcn default
+  // because it doesn't read as a notification dismissal at the top of the screen.
+  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border p-6 pr-8 shadow-lg transition-opacity duration-1000 data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=open]:slide-in-from-top-full data-[state=open]:fade-in-0 data-[state=closed]:opacity-0",
   {
     variants: {
       variant: {

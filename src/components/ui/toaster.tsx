@@ -5,7 +5,9 @@ export function Toaster() {
   const { toasts } = useToast();
 
   return (
-    <ToastProvider>
+    // duration={3000} → toast stays fully visible for 3s, then radix flips it
+    // to data-state="closed" which triggers our 1s fade-out (see toast.tsx).
+    <ToastProvider duration={3000}>
       {toasts.map(function ({ id, title, description, action, ...props }) {
         return (
           <Toast key={id} {...props}>
