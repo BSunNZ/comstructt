@@ -477,5 +477,13 @@ export const useWhisperVoiceInput = ({
     stopWhisper();
   }, [useFallback, whisperSupported, native, stopWhisper]);
 
-  return { supported, listening, interim, error, start, stop, speak };
+  // Pre-warm the mic stream from a user gesture (e.g. pointerdown on the
+  // mic button) so the actual click->record path is instant. Safe to call
+  // multiple times — it short-circuits if the stream is already live.
+  const prewarm = useCallback(() => {
+    if (useFallback || !whisperSupported) return;
+    void acquireStream();
+  }, [useFallback, whisperSupported, acquireStream]);
+
+  return { supported, listening, interim, error, start, stop, speak, prewarm };
 };
