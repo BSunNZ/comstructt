@@ -474,20 +474,21 @@ async function runMatchKits(
       message: "Failed to embed task description",
     };
   }
+  console.log("[construction-agent:chat] task=", taskDescription, "embeddingLength=", embedding.length);
 
-  const { data: kitMatches, error: rpcErr } = await supabase.rpc("match_kits", {
-    query_embedding: embedding,
-    match_count: 1,
-  });
-  if (rpcErr) {
-    console.error("[construction-agent] match_kits RPC error", rpcErr);
+  const kitMatches = await callMatchKits(supabase, embedding, 1, 0.3);
+  console.log(
+    "[construction-agent:chat] raw RPC matches=",
+    Array.isArray(kitMatches) ? kitMatches.map((k) => ({ slug: k.slug, sim: k.similarity })) : kitMatches,
+  );
+  if (kitMatches === null) {
     return {
       kitName: null,
       trade: null,
       areaM2,
       recommendations: [],
       unmatched: [],
-      message: rpcErr.message,
+      message: "match_kits RPC failed",
     };
   }
   if (!kitMatches || kitMatches.length === 0) {
