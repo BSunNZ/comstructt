@@ -14,12 +14,8 @@
  * Deploy: supabase functions deploy search-kits --no-verify-jwt
  * Required secrets: OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  */
-// @ts-expect-error Deno std import resolved at edge runtime
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // @ts-expect-error npm: specifier resolved at edge runtime
-import OpenAI from "npm:openai@4.73.0";
-// @ts-expect-error esm.sh import resolved at edge runtime
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,7 +49,7 @@ type KitOut = {
   unmatched: string[];
 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -98,16 +94,11 @@ serve(async (req: Request) => {
         ? Math.min(5, Math.max(1, Math.round(body.matchCount)))
         : 3;
 
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
 
-    const embedRes = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: query,
-    });
-    const embedding = embedRes.data[0]?.embedding;
+    const embedding = await embedQuery(OPENAI_API_KEY, query);
     if (!embedding) return jsonError(500, "Failed to embed query");
 
     const { data: kitMatches, error: rpcErr } = await supabase.rpc("match_kits", {
