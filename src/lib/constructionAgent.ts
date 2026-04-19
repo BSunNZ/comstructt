@@ -37,8 +37,8 @@ export function parseAgentResponse(data: unknown): AgentResponse | null {
   if (!reply) return null;
 
   const recommendations = Array.isArray(raw.recommendations)
-    ? raw.recommendations
-        .map((item) => {
+    ? (raw.recommendations
+        .map((item): AgentRecommendation | null => {
           if (!item || typeof item !== "object") return null;
           const rec = item as Record<string, unknown>;
           const productId = typeof rec.productId === "string" ? rec.productId : null;
@@ -63,9 +63,9 @@ export function parseAgentResponse(data: unknown): AgentResponse | null {
                 ? rec.priceSource
                 : null,
             listPrice: Number.isFinite(listPrice) && listPrice > 0 ? listPrice : null,
-          } satisfies AgentRecommendation;
+          };
         })
-        .filter((item): item is AgentRecommendation => Boolean(item))
+        .filter(Boolean) as AgentRecommendation[])
     : undefined;
 
   return { reply, recommendations };
