@@ -53,6 +53,14 @@ export const QuantityRow = ({ line, onChange, onRemove }: Props) => {
         <p className="mt-0.5 text-xs text-muted-foreground">
           {product.sku} · {product.unit}
         </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Lieferant:{" "}
+          {product.supplier ? (
+            product.supplier
+          ) : (
+            <span className="italic text-muted-foreground/70">nicht verfügbar</span>
+          )}
+        </p>
         {product.price > 0 ? (
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <p className="font-display text-lg text-foreground">€{(product.price * qty).toFixed(2)}</p>
