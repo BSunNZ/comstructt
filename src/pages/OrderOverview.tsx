@@ -34,7 +34,6 @@ import {
 import { toast } from "@/hooks/use-toast";
 
 type SectionKey = "Requested" | "Ordered" | "Delivered" | "Rejected";
-type TabKey = "all" | "open" | "delivered" | "rejected";
 
 const SECTION_META: Record<
   SectionKey,
@@ -108,12 +107,14 @@ const SECTION_META: Record<
 
 const SECTION_ORDER: SectionKey[] = ["Requested", "Ordered", "Delivered", "Rejected"];
 
-const TABS: { key: TabKey; label: string; sections: SectionKey[] }[] = [
-  { key: "all", label: "Alle", sections: ["Requested", "Ordered", "Delivered", "Rejected"] },
-  { key: "open", label: "Offen", sections: ["Requested", "Ordered"] },
-  { key: "delivered", label: "Geliefert", sections: ["Delivered"] },
-  { key: "rejected", label: "Abgelehnt", sections: ["Rejected"] },
-];
+// Map any DB status (including legacy values) to its visual section so we
+// can pick the right color-coded badge per card in the unified list.
+const sectionForStatus = (status: string | null | undefined): SectionKey => {
+  const norm = normalizeStatus(status);
+  return (
+    SECTION_ORDER.find((k) => SECTION_META[k].matches.includes(norm)) ?? "Requested"
+  );
+};
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
@@ -138,7 +139,7 @@ const OrderOverview = () => {
   const [selected, setSelected] = useState<DbOrder | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<DbOrder | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>("all");
+  
 
   const refresh = async (alive: () => boolean = () => true) => {
     try {
@@ -209,23 +210,17 @@ const OrderOverview = () => {
     }
   };
 
-  const grouped = useMemo(() => {
-    const out: Record<SectionKey, DbOrder[]> = {
-      Requested: [],
-      Ordered: [],
-      Delivered: [],
-      Rejected: [],
-    };
-    for (const o of orders) {
-      const norm = normalizeStatus(o.status);
-      for (const k of SECTION_ORDER) {
-        if (SECTION_META[k].matches.includes(norm)) {
-          out[k].push(o);
-          break;
-        }
-      }
-    }
-    return out;
+  // Single unified list. Sort by section priority (Requested first, then
+  // Ordered, Delivered, Rejected) and within each section by newest first
+  // — keeps the most actionable orders at the top now that the tab bar
+  // is gone.
+  const orderedList = useMemo(() => {
+    const priority = (o: DbOrder) => SECTION_ORDER.indexOf(sectionForStatus(o.status));
+    return [...orders].sort((a, b) => {
+      const dp = priority(a) - priority(b);
+      if (dp !== 0) return dp;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
   }, [orders]);
 
   return (
@@ -236,45 +231,7 @@ const OrderOverview = () => {
         back="/order/trade"
       />
 
-      <main className="mx-auto max-w-md px-4 pt-5 space-y-7">
-        {/* Status filter tabs — Rejected lives in its own bucket so the
-            standard Open/Delivered views don't get cluttered with declined
-            orders. */}
-        {!loading && !error && (
-          <div
-            role="tablist"
-            aria-label="Order status filter"
-            className="flex gap-1.5 overflow-x-auto rounded-2xl bg-muted p-1.5"
-          >
-            {TABS.map((tab) => {
-              const active = activeTab === tab.key;
-              const count = tab.sections.reduce((s, k) => s + grouped[k].length, 0);
-              return (
-                <button
-                  key={tab.key}
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold uppercase tracking-wider transition ${
-                    active
-                      ? "bg-card text-foreground shadow-press"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {tab.label}
-                  <span
-                    className={`ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${
-                      active ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground"
-                    }`}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
+      <main className="mx-auto max-w-md px-4 pt-5 space-y-3">
         {loading && (
           <div className="flex items-center justify-center gap-2 rounded-2xl bg-muted p-6 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" /> Loading orders…
@@ -285,125 +242,99 @@ const OrderOverview = () => {
           <div className="rounded-2xl bg-destructive/10 p-4 text-sm text-destructive">{error}</div>
         )}
 
-        {!loading && !error && (TABS.find((t) => t.key === activeTab)?.sections ?? SECTION_ORDER).map((k) => {
-          const meta = SECTION_META[k];
-          const Icon = meta.Icon;
-          const list = grouped[k];
+        {!loading && !error && orderedList.length === 0 && (
+          <div className="flex items-center gap-3 rounded-2xl bg-muted p-4">
+            <Package className="h-6 w-6 text-muted-foreground" />
+            <p className="text-sm font-semibold text-muted-foreground">
+              Noch keine Bestellungen
+            </p>
+          </div>
+        )}
 
-          return (
-            <section key={k} aria-label={`${meta.label} orders`}>
-              <header className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${meta.headerBg}`}>
-                <span className={`grid h-11 w-11 place-items-center rounded-xl bg-card shadow-press ${meta.headerText}`}>
-                  <Icon className="h-6 w-6" />
-                </span>
-                <div className="flex-1 leading-tight">
-                  <h2 className={`font-display text-xl font-bold uppercase tracking-wide ${meta.headerText}`}>
-                    {meta.label}
-                  </h2>
-                  <p className={`text-xs font-semibold ${meta.headerText} opacity-80`}>
-                    {meta.description}
-                  </p>
-                </div>
-                <span
-                  className={`grid h-9 min-w-9 place-items-center rounded-full bg-card px-2 font-display text-base font-bold ${meta.headerText} shadow-press`}
-                >
-                  {list.length}
-                </span>
-              </header>
+        {!loading &&
+          !error &&
+          orderedList.map((o) => {
+            // Per-card status meta keeps the color-coded badge visible at
+            // a glance now that grouped section headers are gone.
+            const meta = SECTION_META[sectionForStatus(o.status)];
+            const items = o.order_items ?? [];
+            const count = itemCount(o);
 
-              <div className="mt-3 space-y-2.5">
-                {list.length === 0 ? (
-                  <div className={`flex items-center gap-3 rounded-2xl p-4 ring-1 ${meta.cardBg} ${meta.cardRing}`}>
-                    <Package className={`h-6 w-6 ${meta.headerText} opacity-60`} />
-                    <p className={`text-sm font-semibold ${meta.headerText} opacity-80`}>
-                      No {meta.label.toLowerCase()} items
+            return (
+              <article
+                key={o.id}
+                className={`rounded-2xl p-3.5 shadow-rugged ring-1 ${meta.cardBg} ${meta.cardRing}`}
+              >
+                <header className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-display text-base leading-tight text-foreground">
+                      {shortId(o.id)}
+                    </p>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      {o.site_name ?? project.name} · {formatDate(o.created_at)}
                     </p>
                   </div>
-                ) : (
-                  list.map((o) => {
-                    const items = o.order_items ?? [];
-                    const count = itemCount(o);
+                  <span
+                    className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.badgeBg} ${meta.badgeText}`}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${meta.accentDot}`} />
+                    {meta.label}
+                  </span>
+                </header>
 
-                    return (
-                      <article
-                        key={o.id}
-                        className={`rounded-2xl p-3.5 shadow-rugged ring-1 ${meta.cardBg} ${meta.cardRing}`}
+                <ul className="mt-2.5 space-y-1.5">
+                  {items.length === 0 ? (
+                    <li className="rounded-lg bg-card/70 px-2.5 py-2 text-xs text-muted-foreground">
+                      No items linked
+                    </li>
+                  ) : (
+                    items.slice(0, 3).map((it) => (
+                      <li
+                        key={it.id}
+                        className="flex items-center gap-2.5 rounded-lg bg-card/70 px-2.5 py-2"
                       >
-                        <header className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-display text-base leading-tight text-foreground">
-                              {shortId(o.id)}
-                            </p>
-                            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {o.site_name ?? project.name} · {formatDate(o.created_at)}
-                            </p>
-                          </div>
-                          <span
-                            className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.badgeBg} ${meta.badgeText}`}
-                          >
-                            <span className={`h-1.5 w-1.5 rounded-full ${meta.accentDot}`} />
-                            {meta.label}
-                          </span>
-                        </header>
+                        <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold text-foreground ring-1 ring-border tabular-nums">
+                          {it.quantity.toLocaleString("de-DE")}×
+                        </span>
+                        <p className="line-clamp-2 min-w-0 flex-1 text-sm font-semibold leading-tight text-foreground break-words">
+                          {itemName(it)}
+                        </p>
+                      </li>
+                    ))
+                  )}
+                  {items.length > 3 && (
+                    <li className="px-2.5 text-[11px] font-semibold text-muted-foreground">
+                      +{items.length - 3} more
+                    </li>
+                  )}
+                </ul>
 
-                        <ul className="mt-2.5 space-y-1.5">
-                          {items.length === 0 ? (
-                            <li className="rounded-lg bg-card/70 px-2.5 py-2 text-xs text-muted-foreground">
-                              No items linked
-                            </li>
-                          ) : (
-                            items.slice(0, 3).map((it) => (
-                              <li
-                                key={it.id}
-                                className="flex items-center gap-2.5 rounded-lg bg-card/70 px-2.5 py-2"
-                              >
-                                <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold text-foreground ring-1 ring-border tabular-nums">
-                                  {it.quantity.toLocaleString("de-DE")}×
-                                </span>
-                                <p className="line-clamp-2 min-w-0 flex-1 text-sm font-semibold leading-tight text-foreground break-words">
-                                  {itemName(it)}
-                                </p>
-                              </li>
-                            ))
-                          )}
-                          {items.length > 3 && (
-                            <li className="px-2.5 text-[11px] font-semibold text-muted-foreground">
-                              +{items.length - 3} more
-                            </li>
-                          )}
-                        </ul>
-
-                        <footer className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                            {count} item{count === 1 ? "" : "s"}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {isWithinCancelWindow(o.created_at) &&
-                              normalizeStatus(o.status) !== "delivered" &&
-                              normalizeStatus(o.status) !== "rejected" && (
-                                <button
-                                  onClick={() => setCancelTarget(o)}
-                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
-                                >
-                                  <X className="h-3.5 w-3.5" /> Cancel
-                                </button>
-                              )}
-                            <button
-                              onClick={() => setSelected(o)}
-                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
-                            >
-                              <Eye className="h-3.5 w-3.5" /> Details
-                            </button>
-                          </div>
-                        </footer>
-                      </article>
-                    );
-                  })
-                )}
-              </div>
-            </section>
-          );
-        })}
+                <footer className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {count} item{count === 1 ? "" : "s"}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {isWithinCancelWindow(o.created_at) &&
+                      normalizeStatus(o.status) !== "delivered" &&
+                      normalizeStatus(o.status) !== "rejected" && (
+                        <button
+                          onClick={() => setCancelTarget(o)}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
+                        >
+                          <X className="h-3.5 w-3.5" /> Cancel
+                        </button>
+                      )}
+                    <button
+                      onClick={() => setSelected(o)}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
+                    >
+                      <Eye className="h-3.5 w-3.5" /> Details
+                    </button>
+                  </div>
+                </footer>
+              </article>
+            );
+          })}
       </main>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
