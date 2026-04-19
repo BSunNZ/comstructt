@@ -61,11 +61,8 @@ export function useOrderNotifications() {
       hydratedRef.current = true;
     })();
 
-    // Unique channel name per mount — supabase-js caches channels by name
-    // and reusing one after `.subscribe()` throws "cannot add postgres_changes
-    // callbacks ... after subscribe()" (happens with StrictMode/HMR remounts).
     const channel = supabase
-      .channel(`notifications:project:${projectId}:${Math.random().toString(36).slice(2)}`)
+      .channel(`notifications:project:${projectId}`)
       .on(
         "postgres_changes" as never,
         {
