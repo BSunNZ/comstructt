@@ -462,7 +462,7 @@ const OrderSearch = () => {
                 aria-label={listening ? "Stop voice input" : "Start voice input"}
                 aria-pressed={listening}
                 title={voiceSupported ? "Voice input" : "Voice input not supported"}
-                className={`tap-target grid h-20 w-20 place-items-center rounded-2xl transition active:translate-y-0.5 ${
+                className={`tap-target grid h-20 w-20 place-items-center rounded-full transition active:translate-y-0.5 ${
                   listening
                     ? "animate-pulse bg-primary text-primary-foreground shadow-press"
                     : "bg-secondary text-secondary-foreground active:bg-white/10"
