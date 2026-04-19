@@ -358,19 +358,24 @@ const AlphaLayout = ({
       ))}
     </div>
 
-    {/* Row 3 — Shift · 7 letters · Backspace */}
+    {/* Row 3 — Shift · 7 letters · Backspace.
+        On a real iPhone the letter keys here are exactly the same width as
+        rows 1 & 2 (10-key grid). Shift and Backspace are ~1.25× a letter
+        key, NOT the oversized 1.45× they were before — that's what made
+        the Y-M row look squished. */}
     <div className="mb-[11px] flex">
       <KeyCap
         id="shift"
         pressed={pressed}
         variant="system"
-        flex={1.45}
+        flex={1.25}
         ariaLabel="Shift"
         onPress={() => onKey("shift")}
       >
         <ShiftIcon active={shift} />
       </KeyCap>
-      <div className="flex flex-1">
+      {/* 7 letters占 7 of the 10-key grid → flex 7 against shift+backspace 2.5 */}
+      <div className="flex" style={{ flex: 7 }}>
         {rows[2].map((k) => (
           <KeyCap key={k} id={k.toLowerCase()} pressed={pressed} onPress={() => onKey(k)}>
             {k}
@@ -381,7 +386,7 @@ const AlphaLayout = ({
         id="delete"
         pressed={pressed}
         variant="system"
-        flex={1.45}
+        flex={1.25}
         ariaLabel="Backspace"
         onPress={() => onKey("delete")}
       >
