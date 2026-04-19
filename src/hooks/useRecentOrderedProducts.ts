@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { Product, CartLine } from "@/data/catalog";
 import type { DbProduct } from "@/hooks/useSmartProductSearch";
+import { enrichProduct } from "@/lib/productSearch";
 
 export type RecentOrderedProduct = {
   product: Product;
@@ -14,9 +15,12 @@ type Row = {
   unit_price: number | null;
   product_name: string | null;
   unit: string | null;
+  supplier_name?: string | null;
   created_at: string;
   product_id: string | null;
-  normalized_products: DbProduct | null;
+  // normalized_products(*) plus the joined supplier mapping so we can
+  // recompute the active supplier when the snapshot column is missing.
+  normalized_products: (DbProduct & { id: string }) | null;
   orders: { created_at: string; project_id: string | null } | null;
 };
 
@@ -28,10 +32,17 @@ export const recentOrderedQueryKey = (projectId: string | null | undefined, limi
 
 const DAYS_30_MS = 30 * 24 * 60 * 60 * 1000;
 
-function mapRowToRecentProduct(r: Row): RecentOrderedProduct | null {
+function mapRowToRecentProduct(
+  r: Row,
+  projectId: string | null | undefined,
+): RecentOrderedProduct | null {
   const np = r.normalized_products;
   if (!np) return null;
   const id = String(np.id);
+  // Re-enrich the joined product so we get the same supplier resolution
+  // as the live search. Falls back to the snapshot supplier_name on the
+  // order_items row when the join didn't surface a mapping.
+  const enriched = enrichProduct(np, projectId ?? null);
   return {
     product: {
       id,
@@ -41,6 +52,7 @@ function mapRowToRecentProduct(r: Row): RecentOrderedProduct | null {
       price: typeof r.unit_price === "number" && r.unit_price > 0 ? r.unit_price : 0,
       category: np.category ?? "Allgemein",
       subcategory: np.subcategory ?? null,
+      supplier: r.supplier_name ?? enriched.supplierName ?? null,
     },
     lastQty: Number(r.quantity) > 0 ? Number(r.quantity) : 1,
     lastOrderedAt: r.orders?.created_at ?? r.created_at,
@@ -54,17 +66,38 @@ export async function fetchRecentOrderedProducts(
   if (!isSupabaseConfigured || !projectId) return [];
 
   const sinceIso = new Date(Date.now() - DAYS_30_MS).toISOString();
-  const { data, error } = await supabase
+  // Try with the supplier_name snapshot column first. If the migration
+  // hasn't been applied yet, retry without it — supplier still resolves
+  // client-side via the joined supplier_product_mapping.
+  const baseSelect =
+    "quantity, unit_price, product_name, unit, created_at, product_id, " +
+    "normalized_products(*, supplier_product_mapping(contract_price, project_prices, supplier_id, suppliers(name))), " +
+    "orders!inner(created_at, project_id)";
+  const withSupplierSelect = `supplier_name, ${baseSelect}`;
+
+  let { data, error } = await supabase
     .from("order_items")
-    .select(
-      "quantity, unit_price, product_name, unit, created_at, product_id, " +
-        "normalized_products(*), orders!inner(created_at, project_id)",
-    )
+    .select(withSupplierSelect)
     .eq("orders.project_id", projectId)
     .gte("orders.created_at", sinceIso)
     .order("created_at", { foreignTable: "orders", ascending: false })
     .order("created_at", { ascending: false })
     .limit(limit * 8);
+
+  if (error && error.code === "PGRST204" && /supplier_name/i.test(error.message ?? "")) {
+    console.warn(
+      "[recent-ordered] supplier_name snapshot column missing — retrying without it. " +
+        "Run db/migrations/2026-04-19_order_items_supplier.sql.",
+    );
+    ({ data, error } = await supabase
+      .from("order_items")
+      .select(baseSelect)
+      .eq("orders.project_id", projectId)
+      .gte("orders.created_at", sinceIso)
+      .order("created_at", { foreignTable: "orders", ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(limit * 8));
+  }
 
   if (error) {
     console.error("[recent-ordered] query failed", {
@@ -84,7 +117,7 @@ export async function fetchRecentOrderedProducts(
   const out: RecentOrderedProduct[] = [];
 
   for (const row of rows) {
-    const mapped = mapRowToRecentProduct(row);
+    const mapped = mapRowToRecentProduct(row, projectId);
     if (!mapped) continue;
     if (seen.has(mapped.product.id)) continue;
     seen.add(mapped.product.id);
