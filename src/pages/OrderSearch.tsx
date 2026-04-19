@@ -448,7 +448,7 @@ const OrderSearch = () => {
               onChange={(e) => onTypeChange(e.target.value)}
               placeholder={listening ? "Höre zu…" : "z.B. Kauf mir schrauben"}
               aria-label="Search materials"
-              className={`block h-32 w-full border-2 bg-card pl-20 pr-32 text-sm shadow-rugged outline-none placeholder:text-muted-foreground placeholder:transition-opacity focus:placeholder:opacity-0 focus:border-primary rounded-full opacity-100 font-normal text-left font-sans ${
+              className={`block h-32 w-full border-2 bg-card pl-20 pr-32 text-base shadow-rugged outline-none placeholder:text-muted-foreground placeholder:transition-opacity focus:placeholder:opacity-0 focus:border-primary rounded-full opacity-100 font-normal text-left font-sans ${
                 listening ? "border-primary" : "border-border"
               }`}
             />
