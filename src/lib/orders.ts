@@ -144,6 +144,18 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     throw err;
   }
 
+  // Compute the order total upfront from the cart so the header carries
+  // the correct value the moment it lands in the DB. The
+  // `tg_order_items_recalc` trigger overwrites this on every order_items
+  // insert/update/delete to keep it authoritative — so this initial value
+  // is just a defensive starting point that matches what the user saw
+  // in the cart at checkout time.
+  const submittedTotal = linesToInsert.reduce((sum, l) => {
+    const price = Number(l.product.price) || 0;
+    const qty = Math.max(0, Number(l.qty) || 0);
+    return sum + (price > 0 ? price * qty : 0);
+  }, 0);
+
   // Phase 1 — insert order header.
   const orderPayload = {
     status,
@@ -152,15 +164,34 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     site_name: input.siteName ?? null,
     ordered_by: input.orderedBy ?? null,
     notes: input.notes ?? null,
+    total_price: submittedTotal,
   };
   // QA: log the exact payload sent to Supabase.
   console.info("[orders] → POST orders", orderPayload);
 
-  const { data: order, error: orderErr } = await supabase
+  let { data: order, error: orderErr } = await supabase
     .from("orders")
     .insert(orderPayload)
     .select()
     .single();
+
+  // Defensive fallback: if the schema cache hasn't picked up `total_price`
+  // (legacy DBs pre-2026-04-18 audit migration), retry without it. The
+  // trigger `tg_order_items_recalc` will populate it on the items insert.
+  if (orderErr && orderErr.code === "PGRST204" && /total_price/i.test(orderErr.message ?? "")) {
+    console.warn(
+      "[orders] orders.total_price column missing in schema cache — retrying without it. " +
+        "Run db/migrations/2026-04-18_orders_audit.sql to add the column.",
+      { message: orderErr.message },
+    );
+    const { total_price: _drop, ...legacyPayload } = orderPayload;
+    void _drop;
+    ({ data: order, error: orderErr } = await supabase
+      .from("orders")
+      .insert(legacyPayload)
+      .select()
+      .single());
+  }
 
   if (orderErr) {
     console.error("[orders] orders insert failed", {
@@ -172,7 +203,11 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     throw orderErr;
   }
   const created = order as DbOrder;
-  console.info("[orders] ← orders insert ok", { id: created.id, status: created.status });
+  console.info("[orders] ← orders insert ok", {
+    id: created.id,
+    status: created.status,
+    total_price: created.total_price,
+  });
 
   // Phase 2 — insert order_items linked to the new order_id.
   // Full row includes snapshot columns (product_name, unit) added by the

@@ -30,6 +30,30 @@ export function orderItemsTotal(items: DbOrderItem[] | null | undefined): number
 }
 
 /**
+ * Display total for a persisted order.
+ *
+ * Always prefer `orders.total_price` (kept in sync by the DB trigger
+ * `tg_order_items_recalc`) so what the user sees matches what's stored.
+ * Falls back to recomputing from `order_items` for legacy orders where
+ * `total_price` is null or 0 but items exist (defensive — should be rare
+ * after the one-time backfill in 2026-04-18_orders_audit.sql).
+ */
+export function displayOrderTotal(order: {
+  total_price?: number | null;
+  order_items?: DbOrderItem[] | null;
+}): number {
+  const stored = Number(order.total_price);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  return orderItemsTotal(order.order_items ?? null);
+}
+
+/** Format a numeric total as a Euro currency string (e.g. €800.00). */
+export function formatEuro(amount: number): string {
+  const n = Number.isFinite(amount) ? amount : 0;
+  return `€${n.toFixed(2)}`;
+}
+
+/**
  * Decides the initial status for a freshly-submitted order based on the
  * project's approval threshold.
  *

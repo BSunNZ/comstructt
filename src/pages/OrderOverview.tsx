@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { orderItemsTotal } from "@/lib/orderTotals";
+import { displayOrderTotal, formatEuro } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
 import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban } from "lucide-react";
 import {
@@ -351,7 +351,7 @@ const OrderOverview = () => {
 
                       <footer className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          {count} item{count === 1 ? "" : "s"}
+                          {count} item{count === 1 ? "" : "s"} · {formatEuro(displayOrderTotal(o))}
                         </span>
                         <div className="flex items-center gap-1">
                           {isWithinCancelWindow(o.created_at) &&
@@ -404,7 +404,7 @@ const OrderOverview = () => {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">Gesamtsumme</span>
                   <span className="font-display text-lg">
-                    €{orderItemsTotal(selected.order_items).toFixed(2)}
+                    {formatEuro(displayOrderTotal(selected))}
                   </span>
                 </div>
                 {selected.ordered_by && (
