@@ -149,8 +149,12 @@ export const IOSKeyboard = ({ container }: Props) => {
     if (!container) return;
     const KB_HEIGHT = layout === "numeric" ? 260 : 291;
     container.style.setProperty("--ios-kb-h", target ? `${KB_HEIGHT}px` : "0px");
+    // Boolean flag (0 / 1) so consumers can toggle padding without JS —
+    // used by the cart bar to collapse its safe-area pb when the keys are up.
+    container.style.setProperty("--ios-kb-open", target ? "1" : "0");
     return () => {
       container.style.setProperty("--ios-kb-h", "0px");
+      container.style.setProperty("--ios-kb-open", "0");
     };
   }, [container, target, layout]);
 
