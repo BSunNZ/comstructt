@@ -569,6 +569,52 @@ async function embedText(apiKey: string, input: string): Promise<number[] | null
   return json?.data?.[0]?.embedding ?? null;
 }
 
+// Calls the match_kits RPC. The DB function went through two signatures:
+//   v1: match_kits(query_embedding, match_count)
+//   v2: match_kits(query_embedding, match_count, match_threshold)  ← current
+// We try v2 first and gracefully fall back to v1 (then drop low-similarity
+// matches in code) so deploys can roll out independently of the migration.
+// deno-lint-ignore no-explicit-any
+async function callMatchKits(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  embedding: number[],
+  matchCount: number,
+  matchThreshold: number,
+  // deno-lint-ignore no-explicit-any
+): Promise<any[] | null> {
+  const v2 = await supabase.rpc("match_kits", {
+    query_embedding: embedding,
+    match_count: matchCount,
+    match_threshold: matchThreshold,
+  });
+  if (!v2.error) return v2.data ?? [];
+
+  const msg = String(v2.error.message ?? "");
+  // Function signature mismatch → old RPC still deployed. Fall back.
+  if (
+    msg.includes("match_threshold") ||
+    msg.toLowerCase().includes("function") && msg.toLowerCase().includes("does not exist")
+  ) {
+    console.warn("[construction-agent] match_kits v2 missing, falling back to v1:", msg);
+    const v1 = await supabase.rpc("match_kits", {
+      query_embedding: embedding,
+      match_count: matchCount,
+    });
+    if (v1.error) {
+      console.error("[construction-agent] match_kits v1 also failed", v1.error);
+      return null;
+    }
+    // deno-lint-ignore no-explicit-any
+    return ((v1.data ?? []) as any[]).filter(
+      (r) => typeof r.similarity === "number" && r.similarity >= matchThreshold,
+    );
+  }
+
+  console.error("[construction-agent] match_kits error", v2.error);
+  return null;
+}
+
 function buildEmbeddingText(kit: {
   name: string;
   trade: string | null;
