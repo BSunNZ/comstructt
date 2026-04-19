@@ -1,4 +1,4 @@
-import { Truck, ShieldCheck, Package, MapPin, Clock, User, Wallet } from "lucide-react";
+import { Truck, ShieldCheck, Package, MapPin, User } from "lucide-react";
 
 // All numbers below are illustrative placeholders. Replace with live
 // inventory / approval / project data once those backends exist.

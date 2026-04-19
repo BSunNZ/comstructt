@@ -13,9 +13,6 @@ import { CartRecommendations } from "@/components/cart/CartRecommendations";
 import {
   CartDeliveryCard,
   CartApprovalCard,
-  CartVolumeTiersCard,
-  CartOrderMetaCard,
-  type OrderMeta,
 } from "@/components/cart/CartInfoCards";
 import {
   buildOptimisticRecentProducts,
