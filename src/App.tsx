@@ -11,6 +11,7 @@ import OrderStatusScreen from "./pages/OrderStatusScreen.tsx";
 import OrderOverview from "./pages/OrderOverview.tsx";
 import ListPage from "./pages/ListPage.tsx";
 import { DeviceFrame } from "./components/DeviceFrame.tsx";
+import { TaskHelperFAB } from "./components/TaskHelperFAB.tsx";
 
 const queryClient = new QueryClient();
 
@@ -40,6 +41,7 @@ const App = () => (
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
+            <TaskHelperFAB />
           </div>
         </DeviceFrame>
       </BrowserRouter>
