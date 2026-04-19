@@ -16,8 +16,9 @@
  * `<ConstructionAgentFAB />` mount in `src/App.tsx` to remove the feature.
  */
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Search, Loader2, X, RefreshCw, Plus, Package } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { useLocation } from "react-router-dom";
+import { Sparkles, Loader2, X, RefreshCw, Plus, Package, ArrowUp, HardHat } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
@@ -36,10 +37,20 @@ type KitResult = {
   unmatched: string[];
 };
 
+type ChatMessage =
+  | { id: string; role: "user"; text: string; ts: number }
+  | { id: string; role: "assistant"; ts: number; busy?: boolean; error?: string | null; kits?: KitResult[]; query?: string };
+
 const SEARCH_DEBOUNCE_MS = 350;
 const SEARCH_MATCH_THRESHOLD = 0.2;
 
+const formatTime = (ts: number) =>
+  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 export function ConstructionAgentFAB() {
+  const location = useLocation();
+  const isHomePage = location.pathname === "/";
+
   const projectId = useApp((s) => s.projectId);
   const addToCart = useApp((s) => s.addToCart);
 
@@ -52,41 +63,51 @@ export function ConstructionAgentFAB() {
   const [hasSearched, setHasSearched] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const reqIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const lastSubmittedRef = useRef<string>("");
 
-  // Debounced auto-search whenever the query (or m²) changes.
+  // If we navigate away from home while the panel is open, close + unmount.
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!isHomePage && open) setOpen(false);
+  }, [isHomePage, open]);
+
+  // Auto-scroll to bottom when messages change.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, busy]);
+
+  const submitQuery = () => {
     const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setResults([]);
-      setError(null);
-      setHasSearched(false);
-      return;
-    }
-    debounceRef.current = setTimeout(() => {
-      void runSearch(trimmed, parseArea(areaInput));
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, areaInput, projectId]);
+    if (trimmed.length < 2 || busy) return;
+    if (trimmed === lastSubmittedRef.current) return;
+    lastSubmittedRef.current = trimmed;
+    void runSearch(trimmed, parseArea(areaInput));
+  };
 
   const runSearch = async (q: string, areaM2: number | null) => {
     if (!isSupabaseConfigured) {
-      setError("Lovable Cloud ist nicht konfiguriert.");
+      pushAssistant({ error: "Lovable Cloud ist nicht konfiguriert.", query: q });
       return;
     }
     const id = ++reqIdRef.current;
+
+    const userMsgId = `u-${id}-${Date.now()}`;
+    const assistantId = `a-${id}-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      { id: userMsgId, role: "user", text: areaM2 ? `${q} · ${areaM2} m²` : q, ts: Date.now() },
+      { id: assistantId, role: "assistant", ts: Date.now(), busy: true, query: q },
+    ]);
+    setQuery("");
     setBusy(true);
     setError(null);
+
     try {
-      // Primary: new dedicated `kit-assistant` function (fresh deploy, no
-      // chat-history baggage). Falls back to legacy `construction-agent` if
-      // the new function isn't deployed yet.
       let searchResponse = await supabase.functions.invoke("kit-assistant", {
         body: {
           action: "search",
@@ -99,7 +120,6 @@ export function ConstructionAgentFAB() {
       });
 
       if (searchResponse.error) {
-        console.warn("[ConstructionAgentFAB] kit-assistant unavailable, trying construction-agent", searchResponse.error);
         searchResponse = await supabase.functions.invoke("construction-agent", {
           body: {
             action: "search",
@@ -111,12 +131,11 @@ export function ConstructionAgentFAB() {
           },
         });
       }
-      if (id !== reqIdRef.current) return; // stale
+      if (id !== reqIdRef.current) return;
 
       let kits: KitResult[] = [];
 
       if (searchResponse.error) {
-        console.warn("[ConstructionAgentFAB] search action unavailable, trying legacy fallback", searchResponse.error);
         const userContent = areaM2 && areaM2 > 0 ? `${q} (${areaM2} m²)` : q;
         const fallback = await supabase.functions.invoke("construction-agent", {
           body: { projectId, messages: [{ role: "user", content: userContent }] },
@@ -141,26 +160,36 @@ export function ConstructionAgentFAB() {
           if (fallback.error) throw fallback.error;
           kits = parseKitResults(fallback.data, q);
         }
-        if (data && typeof data === "object" && "debug" in (data as Record<string, unknown>)) {
-          // eslint-disable-next-line no-console
-          console.log("[ConstructionAgentFAB] backend debug=", (data as { debug: unknown }).debug);
-        }
       }
-      if (kits.length === 0) {
-        setError(null);
-      }
+
       setResults(kits);
       setHasSearched(true);
+      updateAssistant(assistantId, { busy: false, kits, query: q, error: null });
     } catch (e) {
       if (id !== reqIdRef.current) return;
-      console.error("[ConstructionAgentFAB] search error", e);
       const message = e instanceof Error ? e.message : "Suche fehlgeschlagen";
-      setError(mapAssistantError(message));
-      setResults([]);
-      setHasSearched(true);
+      const mapped = mapAssistantError(message);
+      setError(mapped);
+      updateAssistant(assistantId, { busy: false, kits: [], query: q, error: mapped });
     } finally {
       if (id === reqIdRef.current) setBusy(false);
     }
+  };
+
+  const pushAssistant = (patch: Partial<Extract<ChatMessage, { role: "assistant" }>>) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `a-${Date.now()}`, role: "assistant", ts: Date.now(), busy: false, ...patch },
+    ]);
+  };
+
+  const updateAssistant = (
+    id: string,
+    patch: Partial<Extract<ChatMessage, { role: "assistant" }>>,
+  ) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id && m.role === "assistant" ? { ...m, ...patch } : m)),
+    );
   };
 
   const addKit = (kit: KitResult) => {
@@ -234,6 +263,10 @@ export function ConstructionAgentFAB() {
     }
   };
 
+  if (!isHomePage) return null;
+
+  const showEmpty = messages.length === 0;
+
   return (
     <>
       <button
@@ -248,110 +281,172 @@ export function ConstructionAgentFAB() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          className="flex flex-col gap-0 p-0"
+          className="flex flex-col gap-0 overflow-hidden p-0"
           style={{
             height: "min(85vh, calc(100dvh - var(--ios-kb-h, 0px) - 3rem))",
             maxHeight: "calc(100dvh - var(--ios-kb-h, 0px) - 3rem)",
             transform: "translate(-50%, calc(-50% - (var(--ios-kb-h, 0px) / 2)))",
           }}
         >
-          <DialogHeader className="border-b border-border p-4">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="grid h-9 w-9 place-items-center rounded-full bg-primary/10 text-primary">
-                  <Sparkles className="h-5 w-5" />
-                </span>
-                <div>
-                  <DialogTitle className="text-base">Bau-Assistent</DialogTitle>
-                  <DialogDescription className="text-xs">
-                    Sag, was du brauchst — passende Kits sofort.
-                  </DialogDescription>
-                </div>
+          {/* Header — fixed 56px */}
+          <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                <Sparkles className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold leading-tight text-foreground">
+                  Bau-Assistent
+                </p>
+                <p className="flex items-center gap-1 text-[11px] leading-tight text-muted-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                  Online
+                </p>
               </div>
+            </div>
+            <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={syncEmbeddings}
                 disabled={syncing}
-                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
-                title="Regeneriere AI-Embeddings für alle Kits"
+                aria-label="Embeddings synchronisieren"
+                title="Embeddings synchronisieren"
+                className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-muted disabled:opacity-50"
               >
                 {syncing ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <RefreshCw className="h-3 w-3" />
+                  <RefreshCw className="h-4 w-4" />
                 )}
-                Sync
               </button>
             </div>
-          </DialogHeader>
+          </header>
 
-          {/* Search composer */}
-          <div className="border-b border-border p-3 space-y-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder='z.B. „Fugen machen", „50 m² Trockenbau", „Bad abdichten"'
-                className="pl-9"
-                autoFocus
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                m² (optional)
-              </label>
+          {/* Messages — flex-grow, scrollable */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto bg-background px-3 py-3"
+          >
+            {diagnostic && (
+              <div className="mx-auto mb-2 w-fit rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">
+                {diagnostic}
+              </div>
+            )}
+
+            {showEmpty ? (
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                <span className="mb-3 grid h-12 w-12 place-items-center rounded-full bg-muted text-muted-foreground">
+                  <HardHat className="h-6 w-6" />
+                </span>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Sag mir, was du auf der Baustelle brauchst.
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground/80">
+                  z.B. Fugen machen, Kabel verlegen, Schutz für Winter
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {messages.map((m) =>
+                  m.role === "user" ? (
+                    <li key={m.id} className="flex flex-col items-end">
+                      <div
+                        className="max-w-[80%] bg-primary px-3 py-2 text-sm text-primary-foreground"
+                        style={{ borderRadius: "18px 18px 4px 18px" }}
+                      >
+                        {m.text}
+                      </div>
+                      <span className="mt-1 px-1 text-[10px] text-muted-foreground">
+                        {formatTime(m.ts)}
+                      </span>
+                    </li>
+                  ) : (
+                    <li key={m.id} className="flex flex-col items-start">
+                      <div
+                        className="max-w-[90%] bg-muted px-3 py-2 text-sm text-foreground"
+                        style={{ borderRadius: "18px 18px 18px 4px" }}
+                      >
+                        {m.busy && (
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Suche passende Kits…
+                          </span>
+                        )}
+                        {!m.busy && m.error && (
+                          <span className="flex items-start gap-2 text-destructive">
+                            <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            {m.error}
+                          </span>
+                        )}
+                        {!m.busy && !m.error && (m.kits?.length ?? 0) === 0 && (
+                          <span className="text-muted-foreground">
+                            Keine Kits gefunden. Versuche andere Begriffe oder klicke Sync.
+                          </span>
+                        )}
+                        {!m.busy && !m.error && (m.kits?.length ?? 0) > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs text-muted-foreground">
+                              {m.kits!.length} passende{m.kits!.length === 1 ? "s" : ""} Kit
+                              {m.kits!.length === 1 ? "" : "s"} gefunden:
+                            </p>
+                            {m.kits!.map((kit) => (
+                              <SuggestionCard
+                                key={kit.kitId}
+                                kit={kit}
+                                onAdd={() => addKit(kit)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <span className="mt-1 px-1 text-[10px] text-muted-foreground">
+                        {formatTime(m.ts)}
+                      </span>
+                    </li>
+                  ),
+                )}
+              </ul>
+            )}
+          </div>
+
+          {/* Footer input — fixed */}
+          <footer className="shrink-0 border-t border-border bg-card px-3 py-2">
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                m²
+              </span>
               <Input
                 inputMode="decimal"
                 value={areaInput}
                 onChange={(e) => setAreaInput(e.target.value.replace(/[^\d.,]/g, ""))}
-                placeholder="z.B. 50"
-                className="h-8 w-24 text-sm"
+                placeholder="optional"
+                className="h-7 w-20 rounded-full px-3 text-xs"
               />
             </div>
-            {diagnostic && (
-              <div className="rounded-md bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-                {diagnostic}
-              </div>
-            )}
-          </div>
-
-          {/* Results */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {busy && (
-              <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Suche passende Kits…
-              </div>
-            )}
-
-            {error && (
-              <div className="flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            {!busy && !error && hasSearched && results.length === 0 && (
-              <div className="rounded-xl bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
-          <p className="font-medium text-foreground">Keine Kits gefunden</p>
-                <p className="mt-1 text-xs">
-            Kein Kit-Vektor matched über 20%. Versuche andere Begriffe oder klicke „Sync",
-                  falls du gerade Kits oder Keywords geändert hast.
-                </p>
-              </div>
-            )}
-
-            {!busy && !hasSearched && results.length === 0 && (
-              <div className="rounded-xl bg-muted/50 px-3 py-6 text-center text-xs text-muted-foreground">
-                Tippe oben, um Kits zu finden.
-              </div>
-            )}
-
-            {results.map((kit) => (
-              <SuggestionCard key={kit.kitId} kit={kit} onAdd={() => addKit(kit)} />
-            ))}
-          </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitQuery();
+              }}
+              className="flex items-center gap-2"
+            >
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Sag, was du brauchst…"
+                className="h-10 flex-1 rounded-full bg-background px-4 text-sm"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={busy || query.trim().length < 2}
+                aria-label="Senden"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-transform hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </form>
+          </footer>
         </DialogContent>
       </Dialog>
     </>
