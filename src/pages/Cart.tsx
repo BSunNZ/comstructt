@@ -28,26 +28,10 @@ const Cart = () => {
   const [submitting, setSubmitting] = useState(false);
   const [minApproval, setMinApproval] = useState<number>(0);
 
-  // Editable order metadata. Project number is seeded from the active
-  // project once we've matched it; the user can override anything before
-  // submitting. Note is appended to the existing project-code note.
   const project = useMemo(
     () => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0],
     [projectId],
   );
-  const [meta, setMeta] = useState<OrderMeta>({
-    costCenter: "",
-    projectNumber: project.code ?? "",
-    note: "",
-  });
-  // Keep projectNumber in sync if the active project changes mid-session,
-  // but only when the user hasn't typed something custom.
-  useEffect(() => {
-    setMeta((prev) =>
-      prev.projectNumber === "" || PROJECTS.some((p) => p.code === prev.projectNumber)
-        ? { ...prev, projectNumber: project.code ?? "" }
-        : prev,
-    );
   }, [project.code]);
 
   // Fast workflow: an empty cart should never sit on /cart — bounce straight
