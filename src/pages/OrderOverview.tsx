@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { displayOrderTotal, formatEuro } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
-import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban } from "lucide-react";
+import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban, ChevronDown } from "lucide-react";
 import {
   DbOrder,
   DbOrderItem,
@@ -141,7 +141,10 @@ const OrderOverview = () => {
   const [selected, setSelected] = useState<DbOrder | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<DbOrder | null>(null);
-  
+  // Collapsed-by-default state for Bestellt / Geliefert / Abgelehnt sections.
+  // Requested ('Wartet auf Freigabe') is always expanded and not tracked here.
+  const [openSections, setOpenSections] = useState<Partial<Record<SectionKey, boolean>>>({});
+
 
   const refresh = async (alive: () => boolean = () => true) => {
     try {
@@ -269,13 +272,40 @@ const OrderOverview = () => {
             const meta = SECTION_META[k];
             const Icon = meta.Icon;
             const list = grouped[k];
+            // 'Requested' (Wartet auf Freigabe) stays always-expanded.
+            // The other three sections collapse by default and toggle open
+            // when the user taps the header.
+            const collapsible = k !== "Requested";
+            const open = collapsible ? !!openSections[k] : true;
 
             return (
               <section key={k} aria-label={`${meta.label} orders`} className="space-y-2.5">
-                {/* Section header — same visual language as before, but
-                    purely informational (no tabs, no click target). */}
+                {/* Section header — collapsible for Bestellt / Geliefert /
+                    Abgelehnt; static for Wartet auf Freigabe. */}
                 <header
-                  className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${meta.headerBg}`}
+                  role={collapsible ? "button" : undefined}
+                  tabIndex={collapsible ? 0 : undefined}
+                  aria-expanded={collapsible ? open : undefined}
+                  aria-controls={collapsible ? `section-${k}` : undefined}
+                  onClick={
+                    collapsible
+                      ? () =>
+                          setOpenSections((s) => ({ ...s, [k]: !s[k] }))
+                      : undefined
+                  }
+                  onKeyDown={
+                    collapsible
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setOpenSections((s) => ({ ...s, [k]: !s[k] }));
+                          }
+                        }
+                      : undefined
+                  }
+                  className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${meta.headerBg} ${
+                    collapsible ? "cursor-pointer select-none transition active:scale-[0.99]" : ""
+                  }`}
                 >
                   <span
                     className={`grid h-11 w-11 place-items-center rounded-xl bg-card shadow-press ${meta.headerText}`}
@@ -297,9 +327,18 @@ const OrderOverview = () => {
                   >
                     {list.length}
                   </span>
+                  {collapsible && (
+                    <ChevronDown
+                      className={`h-5 w-5 shrink-0 transition-transform duration-200 ${meta.headerText} ${
+                        open ? "rotate-180" : ""
+                      }`}
+                    />
+                  )}
                 </header>
 
-                {list.map((o) => {
+                {open && (
+                  <div id={`section-${k}`} className="space-y-2.5">
+                    {list.map((o) => {
                   const items = o.order_items ?? [];
                   const count = itemCount(o);
 
@@ -391,6 +430,8 @@ const OrderOverview = () => {
                     </article>
                   );
                 })}
+                  </div>
+                )}
               </section>
             );
           })}
