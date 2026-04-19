@@ -279,4 +279,3 @@ export const enrichProduct = (
   );
   return { ...r, price, priceSource, supplierName, listPrice } as DbProduct;
 };
-};
