@@ -239,6 +239,7 @@ const OrderOverview = () => {
         title="Order Overview"
         subtitle={loading ? "Loading…" : `${project.name} · ${orders.length} total`}
         back="/order/trade"
+        right={<NotificationBell />}
       />
 
       <main className="mx-auto max-w-md px-4 pt-5 space-y-6">

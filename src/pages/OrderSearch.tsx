@@ -19,6 +19,7 @@ import { MaterialWarningTooltip } from "@/components/MaterialWarningTooltip";
 import { OrderInfoPopover } from "@/components/OrderInfoPopover";
 import { ProductDetailDropdown } from "@/components/ProductDetailDropdown";
 import { CategoryGrid } from "@/components/CategoryGrid";
+import { NotificationBell } from "@/components/NotificationBell";
 
 // Map a Supabase normalized_products row into the local Product shape used by the cart.
 // Price is sourced from supplier_product_mapping. When a project context is
@@ -392,6 +393,7 @@ const OrderSearch = () => {
         title="Order"
         right={
           <div className="flex items-center gap-1.5">
+            <NotificationBell />
             <Link
               to="/order/status"
               className="flex h-9 items-center gap-1 whitespace-nowrap rounded-lg bg-primary px-2.5 text-[10px] font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5"
