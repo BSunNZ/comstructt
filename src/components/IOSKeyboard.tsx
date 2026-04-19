@@ -271,7 +271,9 @@ const KeyCap = ({
   const base =
     variant === "letter"
       ? "bg-white text-[hsl(200_25%_12%)] shadow-[0_1px_0_rgba(0,0,0,0.35)]"
-      : "bg-[hsl(220_8%_70%)] text-[hsl(200_25%_12%)] shadow-[0_1px_0_rgba(0,0,0,0.3)]";
+      : variant === "action"
+        ? "bg-primary text-primary-foreground shadow-[0_1px_0_rgba(0,0,0,0.35)]"
+        : "bg-[hsl(220_8%_70%)] text-[hsl(200_25%_12%)] shadow-[0_1px_0_rgba(0,0,0,0.3)]";
   return (
     <button
       type="button"
