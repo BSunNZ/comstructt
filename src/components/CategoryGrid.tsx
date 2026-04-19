@@ -1,10 +1,9 @@
 import { Link } from "react-router-dom";
-import { CATEGORIES, OTHER_CATEGORY } from "@/data/categories";
+import { CATEGORIES } from "@/data/categories";
 
 /**
- * 2×3 grid of the six main product categories with the "Sonstiges"
- * (Other) catch-all rendered as a wide button beneath. Each tile links
- * to /category/:slug where the user picks a subcategory.
+ * 2×3 grid of the six main product categories. Each tile links to
+ * /category/:slug where the user picks a subcategory.
  */
 export const CategoryGrid = () => {
   return (
@@ -31,21 +30,6 @@ export const CategoryGrid = () => {
           </Link>
         ))}
       </div>
-
-      <Link
-        to={`/category/${OTHER_CATEGORY.slug}`}
-        className="flex w-full items-center gap-3 rounded-2xl bg-card p-4 shadow-rugged ring-1 ring-border active:translate-y-0.5"
-        aria-label="Sonstige Kategorien"
-      >
-        <span className={`grid h-10 w-10 place-items-center rounded-xl bg-secondary/60 ${OTHER_CATEGORY.tone}`}>
-          <OTHER_CATEGORY.icon className="h-6 w-6" />
-        </span>
-        <span className="flex-1 text-left">
-          <span className="block text-sm font-bold text-foreground">{OTHER_CATEGORY.label}</span>
-          <span className="block text-[11px] text-muted-foreground">{OTHER_CATEGORY.tagline}</span>
-        </span>
-        <span className="text-xs font-bold uppercase tracking-wider text-primary">Öffnen →</span>
-      </Link>
     </section>
   );
 };
