@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { TopBar } from "@/components/TopBar";
-import { Search, ShoppingCart, Plus, Minus, Repeat, MapPin, Sparkles, X, Loader2, ClipboardList, Mic, MicOff, Send } from "lucide-react";
+import { Search, ShoppingCart, Plus, Minus, Repeat, MapPin, Sparkles, X, Loader2, ClipboardList, Mic, MicOff, Send, Check } from "lucide-react";
 import { useApp } from "@/store/app";
 import { isBanned, PROJECTS, Product } from "@/data/catalog";
 import { useRecentOrderedProducts } from "@/hooks/useRecentOrderedProducts";
@@ -57,6 +57,32 @@ const OrderSearch = () => {
   // "ADD TO CART" button instead of the "+ ADD" button. The value is the draft
   // quantity that will be added to the cart on confirm. Cleared after add.
   const [draftQtys, setDraftQtys] = useState<Record<string, number>>({});
+  // Per-card "ADDED!" confirmation flash. Holds product ids that were just
+  // added to the cart; cleared 1s later. Drives a brief checkmark on the
+  // ADD TO CART button without collapsing the selector or removing the
+  // button — so users can keep tapping to add more units.
+  const [justAdded, setJustAdded] = useState<Record<string, true>>({});
+  const justAddedTimers = useRef<Record<string, number>>({});
+  useEffect(() => {
+    return () => {
+      // Clear any pending flash timers on unmount.
+      Object.values(justAddedTimers.current).forEach((t) => window.clearTimeout(t));
+    };
+  }, []);
+  const flashJustAdded = useCallback((id: string) => {
+    setJustAdded((prev) => ({ ...prev, [id]: true }));
+    if (justAddedTimers.current[id]) {
+      window.clearTimeout(justAddedTimers.current[id]);
+    }
+    justAddedTimers.current[id] = window.setTimeout(() => {
+      setJustAdded((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      delete justAddedTimers.current[id];
+    }, 1000);
+  }, []);
 
   const qtyFor = (id: string) => cart.find((l) => l.product.id === id)?.qty ?? 0;
 
@@ -554,25 +580,17 @@ const OrderSearch = () => {
                     </div>
 
                     {(() => {
+                      // Card now has a single, stable layout once the user
+                      // engages with it: ADD TO CART button stacked above a
+                      // quantity selector. The button stays visible after
+                      // every click — only the icon/label briefly flashes
+                      // "ADDED!" — so users can keep tapping to add more
+                      // units. We never collapse to a "view-only" state.
                       const draft = draftQtys[p.id];
                       const inDraft = draft !== undefined;
 
-                      if (qty > 0 && !inDraft) {
-                        // Already in cart → show selector to update cart qty live.
-                        return (
-                          <div className="mt-3">
-                            <QuantitySelector
-                              qty={qty}
-                              onChange={(n) => updateQty(p.id, n)}
-                              size="lg"
-                              label={p.name}
-                            />
-                          </div>
-                        );
-                      }
-
-                      if (!inDraft) {
-                        // Initial state: show "+ ADD" button.
+                      if (!inDraft && qty === 0) {
+                        // Initial state: simple "+ ADD" button.
                         return (
                           <button
                             onClick={() =>
@@ -585,33 +603,60 @@ const OrderSearch = () => {
                         );
                       }
 
-                      // Interaction state: ADD TO CART button stacked above quantity selector.
+                      // Engaged state — either the user pressed "+ ADD"
+                      // (draft set) or the product is already in the cart.
+                      // Default the selector to 1 in the latter case so the
+                      // user can immediately add more units.
+                      const selectorQty = inDraft ? draft : 1;
+                      const flashed = !!justAdded[p.id];
+
                       return (
                         <div className="mt-3 flex flex-col gap-3">
                           <button
                             onClick={() => {
-                              if (draft <= 0) return;
-                              addToCart(p, draft);
-                              setDraftQtys((prev) => {
-                                const next = { ...prev };
-                                delete next[p.id];
-                                return next;
+                              if (selectorQty <= 0) return;
+                              addToCart(p, selectorQty);
+                              flashJustAdded(p.id);
+                              // Persist the draft so the selector stays
+                              // visible and ready for another tap. Do NOT
+                              // clear it — that would collapse the layout.
+                              setDraftQtys((prev) => ({ ...prev, [p.id]: selectorQty }));
+                              toast({
+                                title: "Item added",
+                                description: `${selectorQty}× ${p.name}`,
                               });
-                              toast({ title: "Item added", description: `${draft}× ${p.name}` });
                             }}
-                            disabled={draft <= 0}
-                            className="tap-target flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5 disabled:opacity-50 disabled:active:translate-y-0"
+                            disabled={selectorQty <= 0}
+                            aria-live="polite"
+                            className={`tap-target flex h-14 w-full items-center justify-center gap-2 rounded-xl text-base font-bold uppercase tracking-wider shadow-press active:translate-y-0.5 disabled:opacity-50 disabled:active:translate-y-0 ${
+                              flashed
+                                ? "bg-[hsl(var(--success,142_71%_45%))] text-primary-foreground"
+                                : "bg-primary text-primary-foreground"
+                            }`}
                           >
-                            <ShoppingCart className="h-5 w-5" /> Add to cart
+                            {flashed ? (
+                              <>
+                                <Check className="h-5 w-5" /> Added!
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="h-5 w-5" /> Add to cart
+                              </>
+                            )}
                           </button>
                           <QuantitySelector
-                            qty={draft}
+                            qty={selectorQty}
                             onChange={(n) =>
                               setDraftQtys((prev) => ({ ...prev, [p.id]: Math.max(0, n) }))
                             }
                             size="lg"
                             label={p.name}
                           />
+                          {qty > 0 && (
+                            <p className="text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              {qty}× im Warenkorb
+                            </p>
+                          )}
                         </div>
                       );
                     })()}
