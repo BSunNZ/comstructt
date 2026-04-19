@@ -465,6 +465,41 @@ const OrderOverview = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!cancelTarget} onOpenChange={(o) => !o && setCancelTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this order?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancelTarget && (
+                <>
+                  Order <span className="font-semibold">{shortId(cancelTarget.id)}</span> will be
+                  permanently removed. This cannot be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updatingId === cancelTarget?.id}>
+              Keep order
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (cancelTarget) handleCancel(cancelTarget);
+              }}
+              disabled={updatingId === cancelTarget?.id}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {updatingId === cancelTarget?.id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Yes, cancel order"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
