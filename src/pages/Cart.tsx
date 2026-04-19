@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { TopBar } from "@/components/TopBar";
 import { QuantityRow } from "@/components/QuantityRow";
 import { useApp } from "@/store/app";
@@ -16,10 +17,17 @@ import {
   CartOrderMetaCard,
   type OrderMeta,
 } from "@/components/cart/CartInfoCards";
+import {
+  buildOptimisticRecentProducts,
+  mergeRecentOrderedProducts,
+  recentOrderedQueryKey,
+  type RecentOrderedProduct,
+} from "@/hooks/useRecentOrderedProducts";
 
 const Cart = () => {
   const { cart, updateQty, removeFromCart, clearCart, projectId } = useApp();
   const nav = useNavigate();
+  const queryClient = useQueryClient();
   const [submitting, setSubmitting] = useState(false);
   const [minApproval, setMinApproval] = useState<number>(0);
 
@@ -110,6 +118,12 @@ const Cart = () => {
       const composedNote =
         noteParts.length > 0 ? noteParts.join(" · ") : project.code ? `Project ${project.code}` : null;
 
+      const optimisticRecent = buildOptimisticRecentProducts(cart);
+      queryClient.setQueryData<RecentOrderedProduct[]>(
+        recentOrderedQueryKey(project.id, 8),
+        (current) => mergeRecentOrderedProducts(optimisticRecent, current, 8),
+      );
+
       await createOrder({
         projectId: project.id,
         siteName: project.name,
@@ -118,6 +132,12 @@ const Cart = () => {
         status,
         lines: cart,
       });
+
+      await queryClient.invalidateQueries({
+        queryKey: recentOrderedQueryKey(project.id, 8),
+        exact: true,
+      });
+
       clearCart();
       toast({
         title: status === "ordered" ? "Bestellung ausgelöst" : "Bestellung wartet auf Freigabe",
