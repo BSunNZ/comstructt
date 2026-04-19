@@ -34,7 +34,6 @@ import {
 import { toast } from "@/hooks/use-toast";
 
 type SectionKey = "Requested" | "Ordered" | "Delivered" | "Rejected";
-type TabKey = "all" | "open" | "delivered" | "rejected";
 
 const SECTION_META: Record<
   SectionKey,
@@ -108,12 +107,14 @@ const SECTION_META: Record<
 
 const SECTION_ORDER: SectionKey[] = ["Requested", "Ordered", "Delivered", "Rejected"];
 
-const TABS: { key: TabKey; label: string; sections: SectionKey[] }[] = [
-  { key: "all", label: "Alle", sections: ["Requested", "Ordered", "Delivered", "Rejected"] },
-  { key: "open", label: "Offen", sections: ["Requested", "Ordered"] },
-  { key: "delivered", label: "Geliefert", sections: ["Delivered"] },
-  { key: "rejected", label: "Abgelehnt", sections: ["Rejected"] },
-];
+// Map any DB status (including legacy values) to its visual section so we
+// can pick the right color-coded badge per card in the unified list.
+const sectionForStatus = (status: string | null | undefined): SectionKey => {
+  const norm = normalizeStatus(status);
+  return (
+    SECTION_ORDER.find((k) => SECTION_META[k].matches.includes(norm)) ?? "Requested"
+  );
+};
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
