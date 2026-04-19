@@ -366,8 +366,8 @@ const OrderOverview = () => {
                           key={it.id}
                           className="flex items-center gap-2.5 rounded-lg bg-muted px-2.5 py-2"
                         >
-                          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-card font-display text-sm font-bold ring-1 ring-border">
-                            {it.quantity}×
+                          <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold ring-1 ring-border tabular-nums">
+                            {it.quantity.toLocaleString("de-DE")}×
                           </span>
                           <div className="min-w-0 flex-1">
                             <p className="line-clamp-2 text-sm font-semibold leading-tight">
