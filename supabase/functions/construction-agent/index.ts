@@ -20,8 +20,8 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // @ts-expect-error npm: specifier resolved at edge runtime
 import OpenAI from "npm:openai@4.73.0";
-// @ts-expect-error esm.sh import resolved at edge runtime
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+// @ts-expect-error npm: specifier resolved at edge runtime
+import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
