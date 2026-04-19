@@ -441,7 +441,7 @@ const OrderSearch = () => {
               onChange={(e) => onTypeChange(e.target.value)}
               placeholder={listening ? "Höre zu…" : "Material suchen…"}
               aria-label="Search materials"
-              className={`block h-32 w-full rounded-3xl border-2 bg-card pl-20 pr-44 text-2xl font-medium shadow-rugged outline-none placeholder:text-muted-foreground focus:border-primary ${
+              className={`block h-32 w-full border-2 bg-card pl-20 pr-44 text-2xl shadow-rugged outline-none placeholder:text-muted-foreground focus:border-primary rounded-full opacity-100 font-normal text-center font-sans ${
                 listening ? "border-primary" : "border-border"
               }`}
             />
