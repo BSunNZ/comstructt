@@ -89,7 +89,18 @@ export const QuantitySelector = ({
           const cleaned = e.target.value.replace(/[^\d]/g, "");
           setDraft(cleaned);
         }}
-        onFocus={(e) => e.currentTarget.select()}
+        onFocus={(e) => {
+          e.currentTarget.select();
+          // When the fake iOS keyboard slides up it can cover this row.
+          // Wait one frame for the keyboard's --ios-kb-h padding-bottom to
+          // apply on the scroll container, then scroll the field into view
+          // so it floats just above the keyboard. Returns to its natural
+          // position automatically when the input is blurred (Enter/Return).
+          const el = e.currentTarget;
+          requestAnimationFrame(() => {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+          });
+        }}
         onBlur={commitDraft}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
