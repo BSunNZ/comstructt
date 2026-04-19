@@ -25,7 +25,7 @@ import type {
 } from "@comstruct/shared";
 import {
   buildDefaultMapping,
-  sanitizeIncomingMapping,
+  validateAndNormalizeMapping,
   validateColumns,
   validateMapping,
 } from "./lib/catalog.js";
@@ -112,10 +112,12 @@ app.post(
         columns.includes(entry.sourceColumn)
       );
 
-      const mapping = sanitizeIncomingMapping(
-        columns,
-        requestedMapping ?? defaultPdfMapping
-      );
+      let mapping;
+      try {
+        mapping = validateAndNormalizeMapping(columns, requestedMapping ?? defaultPdfMapping);
+      } catch (err: any) {
+        return next(new ApiError(400, err.message ?? "Invalid mapping.", err?.details));
+      }
 
       const payload: CsvImportPreviewResponse = await createCsvImportPreview({
         fileName: request.file.originalname,
@@ -171,10 +173,12 @@ app.post(
           ? (JSON.parse(request.body.derivedMapping as string) as DerivedFieldMapping[])
           : undefined;
 
-      const mapping = sanitizeIncomingMapping(
-        columns,
-        requestedMapping ?? buildDefaultMapping(columns)
-      );
+      let mapping;
+      try {
+        mapping = validateAndNormalizeMapping(columns, requestedMapping ?? buildDefaultMapping(columns));
+      } catch (err: any) {
+        return next(new ApiError(400, err.message ?? "Invalid mapping.", err?.details));
+      }
 
       const payload: CsvImportPreviewResponse = await createCsvImportPreview({
         fileName: originalName,

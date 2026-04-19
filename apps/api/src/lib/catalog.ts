@@ -546,6 +546,52 @@ export function sanitizeIncomingMapping(
   return sanitized;
 }
 
+export function validateAndNormalizeMapping(
+  columns: string[],
+  mapping?: CsvImportMapping[]
+): CsvImportMapping[] {
+  const errors: string[] = [];
+
+  // Start from a sanitized mapping but detect issues instead of silently ignoring
+  const sanitized = sanitizeIncomingMapping(columns, mapping);
+
+  // Required targets that must appear exactly once
+  const requiredTargets = [
+    "supplierSku",
+    "sourceName",
+    "sourceCategory",
+    "unit",
+    "unitPrice",
+    "supplierName",
+  ] as const;
+
+  for (const target of requiredTargets) {
+    const matches = sanitized.filter((entry) => entry.target === target);
+    if (matches.length === 0) {
+      errors.push(`Missing required mapping for target "${target}".`);
+    } else if (matches.length > 1) {
+      errors.push(`Ambiguous mapping: target "${target}" mapped ${matches.length} times.`);
+    }
+  }
+
+  // Ensure mapping references only known columns
+  const unknownColumns = sanitized
+    .map((entry) => entry.sourceColumn)
+    .filter((col) => !columns.includes(col));
+  if (unknownColumns.length > 0) {
+    errors.push(`Mapping contains unknown columns: ${unknownColumns.join(", ")}`);
+  }
+
+  if (errors.length > 0) {
+    const message = `Invalid mapping: ${errors.join(" ")}`;
+    const err: Error & { details?: string[] } = new Error(message);
+    err.details = errors;
+    throw err;
+  }
+
+  return sanitized;
+}
+
 export function sanitizeIncomingDerivedMapping(
   mapping?: DerivedFieldMapping[]
 ): DerivedFieldMapping[] {
@@ -573,9 +619,44 @@ export function normalizeBoolean(value: string): boolean {
 }
 
 export function normalizePrice(value: string): number {
-  const normalized = value.replace(",", ".").trim();
-  const parsed = Number(normalized);
+  if (value === undefined || value === null) {
+    throw new Error(`Invalid price "${value}".`);
+  }
 
+  let raw = String(value).trim();
+  // remove currency symbols and whitespace
+  raw = raw.replace(/[^0-9,\.\-]/g, "");
+
+  if (raw === "") {
+    throw new Error(`Invalid price "${value}".`);
+  }
+
+  // If both '.' and ',' are present, determine which is decimal (the last one)
+  const lastDot = raw.lastIndexOf(".");
+  const lastComma = raw.lastIndexOf(",");
+  let normalized = raw;
+
+  if (lastDot !== -1 && lastComma !== -1) {
+    const decimalSep = lastComma > lastDot ? "," : ".";
+    if (decimalSep === ",") {
+      normalized = raw.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = raw.replace(/,/g, "");
+    }
+  } else if (lastComma !== -1) {
+    // only comma present: assume comma is decimal if there are up to 2 digits after it
+    const parts = raw.split(",");
+    if (parts.length === 2 && parts[1].length <= 2) {
+      normalized = parts.join(".");
+    } else {
+      normalized = raw.replace(/,/g, "");
+    }
+  } else {
+    // only dot present or neither
+    normalized = raw;
+  }
+
+  const parsed = Number(normalized);
   if (Number.isNaN(parsed)) {
     throw new Error(`Invalid price "${value}".`);
   }
@@ -793,6 +874,16 @@ export function buildPreviewRow(
     isCMaterial:
       isCMaterialValue !== undefined ? normalizeBoolean(isCMaterialValue) : true,
   };
+}
+
+export function computePreviewRowQuality(preview: ImportPreviewRow): number {
+  let score = 0;
+  if (preview.supplierSku && preview.supplierSku.trim().length > 0) score += 0.2;
+  if (preview.unit && preview.unit.trim().length > 0) score += 0.15;
+  if (typeof preview.unitPrice === "number" && preview.unitPrice > 0) score += 0.3;
+  if (preview.sourceName && preview.sourceName.trim().length > 5) score += 0.2;
+  if (preview.normalizedName && preview.normalizedName.trim().length > 0) score += 0.15;
+  return Math.min(1, score);
 }
 
 export function summarizeImport(

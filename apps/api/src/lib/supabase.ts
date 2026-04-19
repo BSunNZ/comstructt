@@ -37,6 +37,8 @@ import {
   normalizeProductIdentity,
   sanitizeIncomingDerivedMapping,
   sanitizeIncomingMapping,
+  validateAndNormalizeMapping,
+  computePreviewRowQuality,
   toStringRecord,
 } from "./catalog.js";
 
@@ -1374,7 +1376,12 @@ export async function createCsvImportPreview(input: {
   importType?: string;
 }): Promise<CsvImportPreviewResponse> {
   const columns = [...Object.keys(input.rows[0] ?? {}), "AI Subcategory (Preview)"];
-  const mapping = sanitizeIncomingMapping(columns, input.mapping);
+  let mapping;
+  try {
+    mapping = validateAndNormalizeMapping(columns, input.mapping);
+  } catch (err: any) {
+    throw new ApiError(400, err.message ?? "Invalid mapping.", err?.details);
+  }
   const derivedMapping = sanitizeIncomingDerivedMapping(input.derivedMapping);
   const createdAt = new Date().toISOString();
   const importId = randomUUID();
@@ -1431,6 +1438,40 @@ export async function createCsvImportPreview(input: {
     "raw_typical_site",
   ]);
 
+  // Run enrichment for each raw row and persist results to raw_description to ensure
+  // confirmImport can reuse deterministic enrichment rather than re-calling the LLM.
+  for (const row of rawProductRows) {
+    let payload = {} as Record<string, unknown>;
+    try {
+      payload = JSON.parse(row.raw_description ?? "{}").source_payload ?? {};
+    } catch {}
+
+    const preview = buildPreviewRow(toStringRecord(payload), mapping);
+    try {
+      const enriched = await enrichProductRowWithLLM(preview.sourceName, preview.sourceCategory, undefined);
+      const quality = computePreviewRowQuality(preview);
+
+      const updatedDescription = JSON.stringify({
+        supplierName: preview.supplierName,
+        source_payload: payload,
+        enrichment: enriched,
+        enrichmentQuality: quality,
+      });
+
+      await run(
+        db.from("raw_product_rows").update({ raw_description: updatedDescription, ai_processed: true }).eq("id", row.id)
+      );
+    } catch (err) {
+      // If enrichment fails, persist minimal info but keep ai_processed=false
+      const updatedDescription = JSON.stringify({
+        supplierName: preview.supplierName,
+        source_payload: payload,
+        enrichmentError: String(err),
+      });
+      await run(db.from("raw_product_rows").update({ raw_description: updatedDescription }).eq("id", row.id));
+    }
+  }
+
   return {
     importBatch: {
       id: importId,
@@ -1456,17 +1497,34 @@ export async function createCsvImportPreview(input: {
     mapping,
     derivedMapping,
     sampleRows: await Promise.all(
-      input.rows.map(async (row) => {
-        const stringRow = toStringRecord(row ?? {});
-        const preview = buildPreviewRow(stringRow, mapping);
-        const enriched = await enrichProductRowWithLLM(
-          preview.sourceName,
-          preview.sourceCategory
+      rawProductRows.map(async (row) => {
+        const matching = await run<DbRawProductRow[]>(
+          db.from("raw_product_rows").select("*").eq("id", row.id).limit(1)
         );
 
+        const enrichment = matching[0]
+          ? (() => {
+              try {
+                return JSON.parse(matching[0].raw_description ?? "{}").enrichment ?? null;
+              } catch {
+                return null;
+              }
+            })()
+          : null;
+
+        const sourcePayload = matching[0]
+          ? (() => {
+              try {
+                return JSON.parse(matching[0].raw_description ?? "{}").source_payload ?? {};
+              } catch {
+                return {};
+              }
+            })()
+          : {};
+
         return {
-          ...stringRow,
-          "AI Subcategory (Preview)": enriched.subcategory,
+          ...toStringRecord(sourcePayload as Record<string, unknown>),
+          "AI Subcategory (Preview)": enrichment ? enrichment.subcategory : "",
         };
       })
     ),
@@ -1528,7 +1586,12 @@ export async function confirmImport(
     columns = Object.keys(JSON.parse(rawRows[0]?.raw_description ?? "{}").source_payload ?? {});
   } catch {}
 
-  const effectiveMapping = sanitizeIncomingMapping(columns, requestedMapping ?? []);
+  let effectiveMapping: CsvImportMapping[];
+  try {
+    effectiveMapping = validateAndNormalizeMapping(columns, requestedMapping ?? []);
+  } catch (err: any) {
+    throw new ApiError(400, err.message ?? "Invalid mapping.", err?.details);
+  }
   const effectiveDerivedMapping = sanitizeIncomingDerivedMapping(requestedDerivedMapping);
   const mappedTargets = new Set(effectiveMapping.map((entry) => entry.target));
   const derivedTargetByField = new Map(
@@ -1555,10 +1618,16 @@ export async function confirmImport(
       supplierCache.set(supplierName, supplier);
     }
 
-    const enriched = await enrichProductRowWithLLM(
-      preview.sourceName,
-      preview.sourceCategory
-    );
+    let enriched: any = null;
+    try {
+      enriched = JSON.parse(row.raw_description ?? "{}").enrichment ?? null;
+    } catch {
+      enriched = null;
+    }
+
+    if (!enriched) {
+      throw new ApiError(409, "Deterministic enrichment missing. Recreate the preview before confirming.");
+    }
     const identity = normalizeProductIdentity(preview.sourceName, {
       familyName: preview.familyName,
       variantLabel: preview.variantLabel,
