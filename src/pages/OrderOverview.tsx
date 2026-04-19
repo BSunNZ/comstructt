@@ -379,7 +379,8 @@ const OrderOverview = () => {
                           </span>
                           <div className="flex items-center gap-1">
                             {isWithinCancelWindow(o.created_at) &&
-                              normalizeStatus(o.status) !== "delivered" && (
+                              normalizeStatus(o.status) !== "delivered" &&
+                              normalizeStatus(o.status) !== "rejected" && (
                                 <button
                                   onClick={() => setCancelTarget(o)}
                                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
