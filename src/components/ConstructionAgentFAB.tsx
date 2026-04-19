@@ -309,6 +309,11 @@ export function ConstructionAgentFAB() {
                 className="h-8 w-24 text-sm"
               />
             </div>
+            {diagnostic && (
+              <div className="rounded-md bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                {diagnostic}
+              </div>
+            )}
           </div>
 
           {/* Results */}
