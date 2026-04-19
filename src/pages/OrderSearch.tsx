@@ -439,13 +439,13 @@ const OrderSearch = () => {
             <input
               value={listening && interim ? interim : q}
               onChange={(e) => onTypeChange(e.target.value)}
-              placeholder={listening ? "Höre zu…" : "Material suchen…"}
+              placeholder={listening ? "Höre zu…" : "Material suchen"}
               aria-label="Search materials"
-              className={`block h-32 w-full border-2 bg-card pl-20 pr-44 text-2xl shadow-rugged outline-none placeholder:text-muted-foreground focus:border-primary rounded-full opacity-100 font-normal text-center font-sans ${
+              className={`block h-32 w-full border-2 bg-card pl-20 pr-32 text-2xl shadow-rugged outline-none placeholder:text-muted-foreground focus:border-primary rounded-full opacity-100 font-normal text-center font-sans ${
                 listening ? "border-primary" : "border-border"
               }`}
             />
-            <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2">
+            <div className="absolute right-6 top-1/2 flex -translate-y-1/2 items-center gap-2">
               {q && !listening && (
                 <button
                   type="button"
