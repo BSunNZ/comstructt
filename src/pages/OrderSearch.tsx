@@ -18,6 +18,7 @@ import { classifyMaterial, type MaterialClass } from "@/utils/materialClassifier
 import { MaterialWarningTooltip } from "@/components/MaterialWarningTooltip";
 import { OrderInfoPopover } from "@/components/OrderInfoPopover";
 import { ProductDetailDropdown } from "@/components/ProductDetailDropdown";
+import { CategoryGrid } from "@/components/CategoryGrid";
 
 // Map a Supabase normalized_products row into the local Product shape used by the cart.
 // Price is sourced from supplier_product_mapping. When a project context is
