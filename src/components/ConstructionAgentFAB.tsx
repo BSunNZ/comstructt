@@ -82,12 +82,20 @@ export function ConstructionAgentFAB() {
     setBusy(true);
     setError(null);
     try {
+      // The deployed construction-agent expects an OpenAI-style chat payload
+      // ({ messages: [...] }) and returns { reply, recommendations? }. We send
+      // the user's query as a single user message, optionally appending the
+      // m² hint so the model fills in area_m2 on its tool call.
+      const userContent = areaM2 && areaM2 > 0 ? `${q} (${areaM2} m²)` : q;
       const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
-        body: { action: "search", query: q, projectId, areaM2, matchCount: 3 },
+        body: {
+          projectId,
+          messages: [{ role: "user", content: userContent }],
+        },
       });
       if (id !== reqIdRef.current) return; // stale
       if (fnError) throw fnError;
-      const kits = parseKitResults(data);
+      const kits = parseKitResults(data, q);
       setResults(kits);
       setHasSearched(true);
     } catch (e) {
