@@ -53,7 +53,7 @@ const OrderSearch = () => {
   // invalidated/refetched on createOrder success so the newest purchase
   // appears immediately without a page reload.
   const { items: recentOrdered, loading: recentLoading, clearLocal: clearRecent } =
-    useRecentOrderedProducts(projectId, 8);
+    useRecentOrderedProducts(projectId, 3);
 
   const [q, setQ] = useState("");
   const [misuse, setMisuse] = useState<string | null>(null);
