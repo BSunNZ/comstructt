@@ -764,9 +764,9 @@ const OrderSearch = () => {
         // for the home indicator, not the keyboard) so the bar doesn't
         // float far above the keyboard.
         style={{
-          bottom: "calc(var(--ios-kb-h, 0px) + (var(--ios-kb-open, 0) * 8px))",
+          bottom: "var(--ios-kb-h, 0px)",
           paddingBottom:
-            "calc((1 - var(--ios-kb-open, 0)) * max(env(safe-area-inset-bottom), 1.5rem) + var(--ios-kb-open, 0) * 8px)",
+            "calc((1 - var(--ios-kb-open, 0)) * max(env(safe-area-inset-bottom), 1.5rem) + var(--ios-kb-open, 0) * 12px)",
         }}
       >
         <button
