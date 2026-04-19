@@ -13,8 +13,11 @@ export type RecentOrderedProduct = {
 type Row = {
   quantity: number | null;
   unit_price: number | null;
-  product_name: string | null;
-  unit: string | null;
+  // Snapshot columns on order_items only exist if those migrations have
+  // been applied. Both are optional — we always fall back to the joined
+  // normalized_products row.
+  product_name?: string | null;
+  unit?: string | null;
   supplier_name?: string | null;
   created_at: string;
   product_id: string | null;
@@ -66,52 +69,50 @@ export async function fetchRecentOrderedProducts(
   if (!isSupabaseConfigured || !projectId) return [];
 
   const sinceIso = new Date(Date.now() - DAYS_30_MS).toISOString();
-  // Try with the supplier_name snapshot column first. If the migration
-  // hasn't been applied yet, retry without it — supplier still resolves
-  // client-side via the joined supplier_product_mapping.
-  const baseSelect =
-    "quantity, unit_price, product_name, unit, created_at, product_id, " +
+  // Snapshot columns added by later migrations. We probe progressively:
+  // if a column doesn't exist (42703 / PGRST204), drop it and retry.
+  // The minimum select always includes the join to normalized_products
+  // so we never lose product name / supplier even on a fresh DB.
+  const optionalCols = ["supplier_name", "product_name", "unit"];
+  const baseRequiredSelect =
+    "quantity, unit_price, created_at, product_id, " +
     "normalized_products(*, supplier_product_mapping(contract_price, project_prices, supplier_id, suppliers(name))), " +
     "orders!inner(created_at, project_id)";
-  const withSupplierSelect = `supplier_name, ${baseSelect}`;
 
-  // Two-shot query. We type both responses as `unknown` then cast to Row[]
-  // at the bottom — PostgREST infers two structurally-different generic
-  // shapes from the two select strings and won't unify them.
-  const first = await supabase
-    .from("order_items")
-    .select(withSupplierSelect)
-    .eq("orders.project_id", projectId)
-    .gte("orders.created_at", sinceIso)
-    .order("created_at", { foreignTable: "orders", ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(limit * 8);
-
-  let data: unknown = first.data;
-  let error: typeof first.error = first.error;
-
-  // PostgREST returns PGRST204 ("column not in schema cache") and Postgres
-  // returns 42703 ("column does not exist") depending on whether the
-  // schema cache is stale or the column is genuinely missing. Handle both.
-  if (
-    error &&
-    (error.code === "PGRST204" || error.code === "42703") &&
-    /supplier_name/i.test(error.message ?? "")
-  ) {
-    console.warn(
-      "[recent-ordered] supplier_name snapshot column missing — retrying without it. " +
-        "Run db/migrations/2026-04-19_order_items_supplier.sql.",
-    );
-    const second = await supabase
+  const runQuery = async (cols: string[]) => {
+    const select = cols.length > 0 ? `${cols.join(", ")}, ${baseRequiredSelect}` : baseRequiredSelect;
+    return supabase
       .from("order_items")
-      .select(baseSelect)
+      .select(select)
       .eq("orders.project_id", projectId)
       .gte("orders.created_at", sinceIso)
       .order("created_at", { foreignTable: "orders", ascending: false })
       .order("created_at", { ascending: false })
       .limit(limit * 8);
-    data = second.data;
-    error = second.error;
+  };
+
+  let cols = [...optionalCols];
+  let data: unknown = null;
+  let error: { code?: string; message?: string; details?: string | null; hint?: string | null } | null = null;
+
+  // Up to N attempts — drop one offending column per failure.
+  for (let attempt = 0; attempt < optionalCols.length + 1; attempt++) {
+    const res = await runQuery(cols);
+    data = res.data;
+    error = res.error;
+    if (!error) break;
+
+    const isMissingCol = error.code === "PGRST204" || error.code === "42703";
+    if (!isMissingCol) break;
+
+    // Find which optional column the error mentions; remove it and retry.
+    const offending = cols.find((c) => new RegExp(`\\b${c}\\b`, "i").test(error?.message ?? ""));
+    if (!offending) break;
+    console.warn(
+      `[recent-ordered] dropping missing column "${offending}" and retrying. ` +
+        `Apply the matching migration to enable richer snapshots.`,
+    );
+    cols = cols.filter((c) => c !== offending);
   }
 
   if (error) {
