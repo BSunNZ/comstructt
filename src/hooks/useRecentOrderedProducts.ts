@@ -75,9 +75,10 @@ export async function fetchRecentOrderedProducts(
     "orders!inner(created_at, project_id)";
   const withSupplierSelect = `supplier_name, ${baseSelect}`;
 
-  // Two-shot query: typed as `unknown` because PostgREST can't infer
-  // structurally identical shapes from two different select strings.
-  let queryRes = await supabase
+  // Two-shot query. We type both responses as `unknown` then cast to Row[]
+  // at the bottom — PostgREST infers two structurally-different generic
+  // shapes from the two select strings and won't unify them.
+  const first = await supabase
     .from("order_items")
     .select(withSupplierSelect)
     .eq("orders.project_id", projectId)
@@ -86,15 +87,15 @@ export async function fetchRecentOrderedProducts(
     .order("created_at", { ascending: false })
     .limit(limit * 8);
 
-  let data: unknown = queryRes.data;
-  let error = queryRes.error;
+  let data: unknown = first.data;
+  let error: typeof first.error = first.error;
 
   if (error && error.code === "PGRST204" && /supplier_name/i.test(error.message ?? "")) {
     console.warn(
       "[recent-ordered] supplier_name snapshot column missing — retrying without it. " +
         "Run db/migrations/2026-04-19_order_items_supplier.sql.",
     );
-    queryRes = await supabase
+    const second = await supabase
       .from("order_items")
       .select(baseSelect)
       .eq("orders.project_id", projectId)
@@ -102,8 +103,8 @@ export async function fetchRecentOrderedProducts(
       .order("created_at", { foreignTable: "orders", ascending: false })
       .order("created_at", { ascending: false })
       .limit(limit * 8);
-    data = queryRes.data;
-    error = queryRes.error;
+    data = second.data;
+    error = second.error;
   }
 
   if (error) {
