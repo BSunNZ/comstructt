@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/store/app";
 import { PROJECTS, ProjectTrade } from "@/data/catalog";
+import { NotificationBell } from "@/components/NotificationBell";
 
 const TRADE_META: Record<ProjectTrade, { Icon: typeof HardHat; tone: string }> = {
   Trockenbau: { Icon: HomeIcon, tone: "bg-[hsl(var(--primary)/0.12)] text-primary" },
@@ -53,18 +54,21 @@ const Index = () => {
       <TopBar
         title="Start"
         right={
-          <Link
-            to="/cart"
-            className="relative grid h-12 w-12 place-items-center rounded-lg active:bg-white/10"
-            aria-label="Warenkorb"
-          >
-            <ShoppingCart className="h-6 w-6 text-secondary-foreground" />
-            {cartCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 grid h-6 min-w-6 place-items-center rounded-full bg-primary px-1 text-xs font-bold text-primary-foreground">
-                {cartCount}
-              </span>
-            )}
-          </Link>
+          <div className="flex items-center gap-1.5">
+            <NotificationBell />
+            <Link
+              to="/cart"
+              className="relative grid h-12 w-12 place-items-center rounded-lg active:bg-white/10"
+              aria-label="Warenkorb"
+            >
+              <ShoppingCart className="h-6 w-6 text-secondary-foreground" />
+              {cartCount > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 grid h-6 min-w-6 place-items-center rounded-full bg-primary px-1 text-xs font-bold text-primary-foreground">
+                  {cartCount}
+                </span>
+              )}
+            </Link>
+          </div>
         }
       />
 
