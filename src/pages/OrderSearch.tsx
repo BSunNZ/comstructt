@@ -20,8 +20,10 @@ import { OrderInfoPopover } from "@/components/OrderInfoPopover";
 import { ProductDetailDropdown } from "@/components/ProductDetailDropdown";
 
 // Map a Supabase normalized_products row into the local Product shape used by the cart.
-// Price is sourced from supplier_product_mapping (lowest active). 0 means
-// "no price available" → UI renders "Preis auf Anfrage".
+// Price is sourced from supplier_product_mapping. When a project context is
+// active, project-specific overrides (project_prices jsonb) win over the
+// supplier's contract_price — see `pickBestPrice`. 0 means "no price
+// available" → UI renders "Preis auf Anfrage".
 const toProduct = (r: DbProduct): Product => ({
   id: String(r.id),
   name: r.product_name ?? r.family_name ?? "Unbenanntes Produkt",
@@ -30,6 +32,7 @@ const toProduct = (r: DbProduct): Product => ({
   price: typeof r.price === "number" && r.price > 0 ? r.price : 0,
   category: r.category ?? "Allgemein",
   subcategory: r.subcategory ?? null,
+  priceSource: r.priceSource ?? undefined,
 });
 
 const OrderSearch = () => {
@@ -146,7 +149,7 @@ const OrderSearch = () => {
 
   const bannedTerm = isBanned(q.trim());
   const searchTerm = !bannedTerm ? q : "";
-  const { results: dbResults, loading, error, configured } = useSmartProductSearch(searchTerm, 20);
+  const { results: dbResults, loading, error, configured } = useSmartProductSearch(searchTerm, 20, projectId);
 
   // When the typed query is a planned-procurement (A/B) material, suppress
   // ALL product cards — even loose Supabase matches — so the user only sees
@@ -186,7 +189,7 @@ const OrderSearch = () => {
       }
 
       try {
-        const result = await resolveVoiceProduct(item.phrase);
+        const result = await resolveVoiceProduct(item.phrase, projectId);
 
         if (result.kind === "none") {
           failedRef.current = [...failedRef.current, item.phrase];
@@ -559,12 +562,22 @@ const OrderSearch = () => {
                           {p.sku} · {p.unit}
                         </p>
                         {p.price > 0 ? (
-                          <p className="mt-1 font-display text-xl text-foreground">
-                            €{p.price.toFixed(2)}
-                            <span className="ml-1 text-sm font-normal text-muted-foreground">
-                              / {p.unit}
-                            </span>
-                          </p>
+                          <div className="mt-1 flex flex-wrap items-baseline gap-2">
+                            <p className="font-display text-xl text-foreground">
+                              €{p.price.toFixed(2)}
+                              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                                / {p.unit}
+                              </span>
+                            </p>
+                            {p.priceSource === "project" && (
+                              <span
+                                className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary ring-1 ring-primary/30"
+                                title="Projekt-spezifischer Sonderpreis"
+                              >
+                                Projektpreis
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <p className="mt-1 font-display text-base text-muted-foreground">
                             Preis auf Anfrage

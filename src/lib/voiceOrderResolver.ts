@@ -28,7 +28,10 @@ const MAX_CANDIDATES = 5;
  * the top score must clear an absolute floor (>= 80). If runner-up is
  * very close, we surface the disambiguation list instead of guessing.
  */
-export async function resolveVoiceProduct(phrase: string): Promise<VoiceResolveResult> {
+export async function resolveVoiceProduct(
+  phrase: string,
+  projectId: string | null | undefined = null,
+): Promise<VoiceResolveResult> {
   const term = (phrase ?? "").trim();
   if (term.length < 2) return { kind: "none" };
 
@@ -50,7 +53,9 @@ export async function resolveVoiceProduct(phrase: string): Promise<VoiceResolveR
     throw error;
   }
 
-  const enriched = (data ?? []).map(enrichProduct);
+  // Apply project-specific pricing during enrichment so the resolver and
+  // the live search agree on the unit price for the active project.
+  const enriched = (data ?? []).map((row) => enrichProduct(row, projectId));
   const ranked = enriched
     .map((p) => ({ p, score: scoreProduct(p, tokens) }))
     .filter((r) => r.score > 0)

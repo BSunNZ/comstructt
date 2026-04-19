@@ -11,9 +11,15 @@
 export type SupplierMappingRow = {
   supplier_id: string | null;
   contract_price: number | null;
-  project_price: number | null;
+  // JSONB column on supplier_product_mapping. Keys are project UUIDs,
+  // values are negotiated unit prices in EUR.
+  //   { "<project_uuid_1>": 3.25, "<project_uuid_2>": 4.10 }
+  project_prices: Record<string, number | string | null> | null;
   suppliers?: { name: string | null } | null;
 };
+
+/** Where the unit price came from for the active context. */
+export type PriceSource = "project" | "contract";
 
 export type DbProduct = {
   id: string;
@@ -36,13 +42,18 @@ export type DbProduct = {
   supplier_product_mapping?: SupplierMappingRow[] | null;
   // Derived client-side from supplier_product_mapping (lowest active price).
   price: number | null;
+  // Where `price` came from. Null when no price could be resolved.
+  priceSource: PriceSource | null;
   supplierName: string | null;
 };
 
 export const PRODUCT_TABLE = "normalized_products";
 
+// NB: project_prices is a JSONB column. Keep the trailing select tight so
+// PostgREST returns the entire jsonb blob — we filter client-side by the
+// active project_id.
 export const PRODUCT_SELECT =
-  "id, category, subcategory, product_name, size, unit, packaging, storage_location, source_name, family_name, family_key, variant_label, variant_attributes, consumption_type, typical_site, is_hazmat, hazardous, supplier_product_mapping(contract_price, project_price, supplier_id, suppliers(name))";
+  "id, category, subcategory, product_name, size, unit, packaging, storage_location, source_name, family_name, family_key, variant_label, variant_attributes, consumption_type, typical_site, is_hazmat, hazardous, supplier_product_mapping(contract_price, project_prices, supplier_id, suppliers(name))";
 
 export const SEARCH_COLUMNS = [
   "product_name",
@@ -119,24 +130,53 @@ export const buildOrFilter = (tokens: string[]): string => {
   return parts.join(",");
 };
 
+/**
+ * Resolve the best unit price for a supplier mapping list, given the
+ * currently active project. Pricing rules:
+ *
+ *   1. If the active `projectId` has an entry in `project_prices` and the
+ *      value parses to a positive number, that wins (priceSource: "project").
+ *   2. Otherwise fall back to `contract_price` (priceSource: "contract").
+ *   3. If multiple supplier mappings exist, pick the lowest resolved price.
+ *
+ * Defensive against malformed JSON values: strings that don't parse as
+ * numbers, negatives, NaN, etc., are all ignored — never crash the cart.
+ */
 export const pickBestPrice = (
   rows: SupplierMappingRow[] | null | undefined,
-): { price: number | null; supplierName: string | null } => {
-  if (!rows || rows.length === 0) return { price: null, supplierName: null };
-  let best: { price: number; supplierName: string | null } | null = null;
+  projectId: string | null | undefined,
+): { price: number | null; priceSource: PriceSource | null; supplierName: string | null } => {
+  if (!rows || rows.length === 0) return { price: null, priceSource: null, supplierName: null };
+  let best: { price: number; priceSource: PriceSource; supplierName: string | null } | null = null;
   for (const r of rows) {
-    const p =
-      typeof r.project_price === "number" && r.project_price > 0
-        ? r.project_price
-        : typeof r.contract_price === "number" && r.contract_price > 0
-          ? r.contract_price
-          : null;
-    if (p === null) continue;
-    if (best === null || p < best.price) {
-      best = { price: p, supplierName: r.suppliers?.name ?? null };
+    let resolved: { price: number; source: PriceSource } | null = null;
+
+    // 1) Project-specific override (jsonb keyed by project_id).
+    if (projectId && r.project_prices && typeof r.project_prices === "object") {
+      const raw = (r.project_prices as Record<string, unknown>)[projectId];
+      const n = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isFinite(n) && n > 0) {
+        resolved = { price: n, source: "project" };
+      }
+    }
+
+    // 2) Fallback to contract price.
+    if (!resolved && typeof r.contract_price === "number" && r.contract_price > 0) {
+      resolved = { price: r.contract_price, source: "contract" };
+    }
+
+    if (!resolved) continue;
+    if (best === null || resolved.price < best.price) {
+      best = {
+        price: resolved.price,
+        priceSource: resolved.source,
+        supplierName: r.suppliers?.name ?? null,
+      };
     }
   }
-  return best ? best : { price: null, supplierName: null };
+  return best
+    ? best
+    : { price: null, priceSource: null, supplierName: null };
 };
 
 export const scoreProduct = (p: DbProduct, tokens: string[]): number => {
@@ -181,9 +221,20 @@ export const diversifyByFamily = (
   return [...primary, ...overflow].slice(0, limit);
 };
 
-/** Enrich a raw row with derived `price` + `supplierName`. */
-export const enrichProduct = (row: unknown): DbProduct => {
-  const r = row as Omit<DbProduct, "price" | "supplierName">;
-  const { price, supplierName } = pickBestPrice(r.supplier_product_mapping);
-  return { ...r, price, supplierName } as DbProduct;
+/**
+ * Enrich a raw row with derived `price`, `priceSource`, `supplierName`.
+ * The `projectId` argument selects project-specific overrides; pass `null`
+ * (or omit) when the user is browsing without a project context — only
+ * contract_price will be considered.
+ */
+export const enrichProduct = (
+  row: unknown,
+  projectId: string | null | undefined = null,
+): DbProduct => {
+  const r = row as Omit<DbProduct, "price" | "priceSource" | "supplierName">;
+  const { price, priceSource, supplierName } = pickBestPrice(
+    r.supplier_product_mapping,
+    projectId,
+  );
+  return { ...r, price, priceSource, supplierName } as DbProduct;
 };

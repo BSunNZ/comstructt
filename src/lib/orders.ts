@@ -179,6 +179,11 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
   // the insert fails with PGRST204 ("Could not find the X column ... in the
   // schema cache") — we then retry with the minimal legacy schema so the app
   // keeps working until the migration is applied.
+  // The full row includes audit columns added by the 2026-04-19 project
+  // pricing migration: `price_source` ("project" | "contract") and
+  // `project_id` (the project context the price was resolved for). When the
+  // schema cache hasn't picked them up yet (PGRST204) we fall back to the
+  // legacy minimal payload so the app keeps working until the migration runs.
   const fullRows = linesToInsert.map((l) => ({
     order_id: created.id,
     product_id: l.product.id,
@@ -186,6 +191,8 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     unit: l.product.unit ?? null,
     quantity: l.qty,
     unit_price: l.product.price > 0 ? l.product.price : null,
+    price_source: l.product.priceSource ?? null,
+    project_id: input.projectId,
   }));
   const legacyRows = linesToInsert.map((l) => ({
     order_id: created.id,
@@ -220,15 +227,17 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     .insert(fullRows)
     .select("id");
 
-  // Schema-cache miss for snapshot columns → retry without them.
+  // Schema-cache miss for snapshot/audit columns → retry without them.
+  // Covers product_name/unit (2026-04-18 migration) and price_source/project_id
+  // (2026-04-19 project-pricing migration).
   if (
     itemsErr &&
     itemsErr.code === "PGRST204" &&
-    /product_name|unit/i.test(itemsErr.message ?? "")
+    /product_name|unit|price_source|project_id/i.test(itemsErr.message ?? "")
   ) {
     console.warn(
-      "[orders] order_items snapshot columns missing — falling back to legacy insert. " +
-        "Run db/migrations/2026-04-18_orders_audit.sql to enable snapshots.",
+      "[orders] order_items audit columns missing — falling back to legacy insert. " +
+        "Run db/migrations/2026-04-18_orders_audit.sql and 2026-04-19_order_items_pricing.sql.",
       { message: itemsErr.message },
     );
     ({ error: itemsErr, data: insertedItems } = await supabase
