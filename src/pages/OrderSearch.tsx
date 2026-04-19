@@ -94,6 +94,17 @@ const OrderSearch = () => {
   }, [q]);
   const isPlannedProcurement = materialClass === "A_B";
 
+  // Reset all per-card draft quantities whenever the search query is cleared
+  // (X button, manual delete, or voice cancel). This snaps every card back to
+  // the "+ ADD" state so the user starts fresh on the next search. Items
+  // already committed to the cart are untouched — only the transient UI
+  // state on the cards is wiped.
+  useEffect(() => {
+    if (q.trim() === "") {
+      setDraftQtys((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+    }
+  }, [q]);
+
   const onTypeChange = (val: string) => {
     setQ(val);
     const banned = isBanned(val);
