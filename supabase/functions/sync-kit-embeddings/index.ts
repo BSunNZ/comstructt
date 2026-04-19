@@ -15,12 +15,8 @@
  * Deploy: supabase functions deploy sync-kit-embeddings --no-verify-jwt
  * Required secrets: OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  */
-// @ts-expect-error Deno std import resolved at edge runtime
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // @ts-expect-error npm: specifier resolved at edge runtime
-import OpenAI from "npm:openai@4.73.0";
-// @ts-expect-error esm.sh import resolved at edge runtime
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,7 +36,7 @@ type KitRow = {
   task_description: string | null;
 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -58,7 +54,6 @@ serve(async (req: Request) => {
       return jsonError(500, "Supabase service role credentials are not configured");
     }
 
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
@@ -98,11 +93,7 @@ serve(async (req: Request) => {
     for (const kit of kits) {
       try {
         const text = buildEmbeddingText(kit);
-        const embedRes = await openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: text,
-        });
-        const embedding = embedRes.data[0]?.embedding;
+        const embedding = await embedText(OPENAI_API_KEY, text);
         if (!embedding) {
           failed++;
           errors.push(`${kit.slug}: empty embedding response`);
@@ -141,6 +132,23 @@ serve(async (req: Request) => {
     return jsonError(500, e instanceof Error ? e.message : "Unknown error");
   }
 });
+
+async function embedText(apiKey: string, input: string): Promise<number[] | null> {
+  const res = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: "text-embedding-3-small", input }),
+  });
+  if (!res.ok) {
+    console.error("[sync-kit-embeddings] embed failed", res.status, await res.text());
+    return null;
+  }
+  const json = await res.json();
+  return json?.data?.[0]?.embedding ?? null;
+}
 
 function buildEmbeddingText(kit: KitRow): string {
   const parts: string[] = [];
