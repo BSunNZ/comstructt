@@ -31,6 +31,15 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useVoiceInput } from "@/hooks/useVoiceInput";
+
+// Detect whether the browser exposes the Web Speech API. We use this to
+// decide whether a Whisper failure can fall back to native recognition.
+const hasWebSpeechApi = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+  return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition);
+};
 
 export type UseWhisperVoiceInputOptions = {
   /** ISO-639-1 language hint passed to Whisper. Defaults to "de". */
@@ -96,10 +105,38 @@ export const useWhisperVoiceInput = ({
   silenceMs = 1500,
   maxRecordingMs = 30_000,
 }: UseWhisperVoiceInputOptions = {}) => {
-  const [supported] = useState(detectSupport);
-  const [listening, setListening] = useState(false);
-  const [interim, setInterim] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // Once the edge function fails, we permanently flip to native Web Speech
+  // so the demo keeps working without round-tripping a broken backend on
+  // every utterance. Persisted in sessionStorage so a page reload during
+  // the same demo doesn't re-trigger the failing call.
+  const [useFallback, setUseFallback] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.sessionStorage.getItem("voice:useNativeFallback") === "1";
+  });
+
+  // Native Web Speech hook — used either as a fallback after a Whisper
+  // failure, or as the primary if Whisper isn't usable in this browser.
+  // Maps the bare "de" tag to the BCP-47 form Web Speech expects.
+  const nativeLang = lang.includes("-") ? lang : `${lang}-${lang.toUpperCase()}`;
+  const native = useVoiceInput({ lang: nativeLang, onFinal, silenceMs });
+
+  const [whisperSupported] = useState(detectSupport);
+  // From the caller's perspective, voice input is "supported" if EITHER
+  // path works.
+  const supported = whisperSupported || native.supported;
+
+  const [whisperListening, setWhisperListening] = useState(false);
+  const [whisperInterim, setWhisperInterim] = useState("");
+  const [whisperError, setWhisperError] = useState<string | null>(null);
+
+  // When in fallback mode, mirror the native hook's state outwards.
+  const listening = useFallback ? native.listening : whisperListening;
+  const interim = useFallback ? native.interim : whisperInterim;
+  const error = useFallback ? native.error : whisperError;
+  // Backwards-compatible setters used by the legacy Whisper path below.
+  const setListening = setWhisperListening;
+  const setInterim = setWhisperInterim;
+  const setError = setWhisperError;
 
   // Refs survive re-renders without retriggering effects.
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -154,7 +191,7 @@ export const useWhisperVoiceInput = ({
    * Stop recording and ship the audio off to Whisper. Safe to call multiple
    * times — `stoppingRef` guards against double-transcription.
    */
-  const stop = useCallback(() => {
+  const stopWhisper = useCallback(() => {
     if (stoppingRef.current) return;
     stoppingRef.current = true;
 
@@ -177,7 +214,7 @@ export const useWhisperVoiceInput = ({
     }
   }, [cleanup]);
 
-  const start = useCallback(async () => {
+  const startWhisper = useCallback(async () => {
     if (!supported) {
       setError("Voice input not supported in this browser.");
       return;
@@ -255,10 +292,32 @@ export const useWhisperVoiceInput = ({
         setInterim("");
         if (text) onFinalRef.current?.(text);
       } catch (e) {
-        console.error("[useWhisperVoiceInput] transcription failed", e);
-        const msg = e instanceof Error ? e.message : "Transcription failed";
-        setError(msg);
+        console.error("[useWhisperVoiceInput] transcription failed — falling back to Web Speech API", e);
         setInterim("");
+        // Permanently flip to the native Web Speech recognizer for the rest
+        // of this session so the demo keeps working without retrying a
+        // broken edge function on every utterance.
+        if (hasWebSpeechApi() && native.supported) {
+          try {
+            window.sessionStorage.setItem("voice:useNativeFallback", "1");
+          } catch {
+            /* sessionStorage unavailable — fine, we'll just keep the in-memory flag */
+          }
+          setUseFallback(true);
+          setError(null);
+          // Immediately re-engage the mic so the user doesn't have to tap
+          // again. Web Speech requires a fresh user gesture in some
+          // browsers; we attempt anyway because we're still inside the
+          // gesture-initiated promise chain.
+          try {
+            native.start();
+          } catch {
+            /* user can tap mic again */
+          }
+        } else {
+          const msg = e instanceof Error ? e.message : "Transcription failed";
+          setError(msg);
+        }
       }
     };
 
@@ -300,7 +359,7 @@ export const useWhisperVoiceInput = ({
             // Silence after speech → arm the auto-stop timer.
             silenceTimerRef.current = window.setTimeout(() => {
               silenceTimerRef.current = null;
-              stop();
+              stopWhisper();
             }, silenceMs);
           }
 
@@ -317,7 +376,7 @@ export const useWhisperVoiceInput = ({
     // Hard timeout so a forgotten mic doesn't record forever.
     maxTimerRef.current = window.setTimeout(() => {
       maxTimerRef.current = null;
-      stop();
+      stopWhisper();
     }, maxRecordingMs);
 
     try {
@@ -329,7 +388,7 @@ export const useWhisperVoiceInput = ({
       setInterim("");
       cleanup();
     }
-  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stop]);
+  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stopWhisper, native]);
 
   // Cleanup on unmount.
   useEffect(
@@ -349,6 +408,25 @@ export const useWhisperVoiceInput = ({
   const speak = useCallback((_text: string, _speakLang?: string) => {
     /* intentionally empty */
   }, []);
+
+  // Public start/stop transparently route to whichever recogniser is
+  // currently active. If Whisper isn't supported at all in this browser
+  // we go straight to native.
+  const start = useCallback(() => {
+    if (useFallback || !whisperSupported) {
+      native.start();
+      return;
+    }
+    void startWhisper();
+  }, [useFallback, whisperSupported, native, startWhisper]);
+
+  const stop = useCallback(() => {
+    if (useFallback || !whisperSupported) {
+      native.stop();
+      return;
+    }
+    stopWhisper();
+  }, [useFallback, whisperSupported, native, stopWhisper]);
 
   return { supported, listening, interim, error, start, stop, speak };
 };
