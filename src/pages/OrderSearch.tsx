@@ -697,9 +697,13 @@ const OrderSearch = () => {
                 Recently ordered on this site
               </h2>
               {recentOrdered.length > 0 && (
-                <Link to="/reorder" className="text-xs font-semibold text-primary">
-                  View all
-                </Link>
+                <button
+                  type="button"
+                  onClick={clearRecent}
+                  className="text-xs font-semibold text-primary active:opacity-60"
+                >
+                  Clear all
+                </button>
               )}
             </div>
 
