@@ -103,6 +103,11 @@ serve(async (req: Request) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Build marker — bump to force a fresh edge deploy when source-only
+  // changes (like comment edits) get deduped by the deploy pipeline.
+  const BUILD_VERSION = "v4-2026-04-19T13:05";
+  console.log(`[construction-agent] build=${BUILD_VERSION} method=${req.method}`);
+
   try {
     // @ts-expect-error Deno global at edge runtime
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
