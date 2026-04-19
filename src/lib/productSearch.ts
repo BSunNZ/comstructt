@@ -221,9 +221,20 @@ export const diversifyByFamily = (
   return [...primary, ...overflow].slice(0, limit);
 };
 
-/** Enrich a raw row with derived `price` + `supplierName`. */
-export const enrichProduct = (row: unknown): DbProduct => {
-  const r = row as Omit<DbProduct, "price" | "supplierName">;
-  const { price, supplierName } = pickBestPrice(r.supplier_product_mapping);
-  return { ...r, price, supplierName } as DbProduct;
+/**
+ * Enrich a raw row with derived `price`, `priceSource`, `supplierName`.
+ * The `projectId` argument selects project-specific overrides; pass `null`
+ * (or omit) when the user is browsing without a project context — only
+ * contract_price will be considered.
+ */
+export const enrichProduct = (
+  row: unknown,
+  projectId: string | null | undefined = null,
+): DbProduct => {
+  const r = row as Omit<DbProduct, "price" | "priceSource" | "supplierName">;
+  const { price, priceSource, supplierName } = pickBestPrice(
+    r.supplier_product_mapping,
+    projectId,
+  );
+  return { ...r, price, priceSource, supplierName } as DbProduct;
 };
