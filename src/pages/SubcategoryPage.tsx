@@ -63,6 +63,7 @@ const SubcategoryPage = () => {
           </div>
         )}
       </main>
+      <CartBar />
     </div>
   );
 };
