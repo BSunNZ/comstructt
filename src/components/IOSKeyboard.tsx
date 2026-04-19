@@ -1,26 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * IOSKeyboard
+ * IOSKeyboard — presentation-grade iPhone QWERTZ keyboard.
  *
- * A presentation-grade fake iPhone keyboard. It is rendered ONLY inside
- * the desktop DeviceFrame (so real mobile users keep their native OS
- * keyboard) and slides up from the bottom of the phone screen whenever a
- * text/number input or textarea is focused.
+ * Renders only inside the desktop DeviceFrame. Detects focused inputs and
+ * pushes app content up via the `--ios-kb-h` CSS variable on the screen
+ * container so the focused field is never hidden under the keys.
  *
- * Behaviour
- * ─────────
- * - Detects focused <input>/<textarea> inside a given container and picks
- *   either the alphabetic or numeric layout based on type / inputmode.
- * - Mouse/touch on a key dispatches a real `input` event on the focused
- *   field so React `onChange` handlers fire normally.
- * - Hardware key presses on the user's real keyboard pulse the matching
- *   on-screen key for visual realism — without intercepting the typing.
- * - Pushes app content up via a CSS variable on the container so the
- *   focused input is never hidden under the keyboard.
+ * Faithful to a real iPhone in iOS 17:
+ *   • 10/9/7-key staggered QWERTZ rows with proper edge gutters
+ *   • Bottom row = 123 · 🌐 · spacebar (wide) · return/Search
+ *   • Numeric pad with grouped digits and a wide return key
+ *   • Light "system" key fills, white letter keys, blue action key
+ *   • SF-ish geometry: 6-px gaps, ~10-px radius, 42-px tall keys
  *
- * The component is purely visual layer + DOM event glue; no global state.
+ * Both interaction modes work simultaneously:
+ *   1. Mouse/touch on a key dispatches a real `input` event so React
+ *      `onChange` handlers fire normally.
+ *   2. Hardware key presses pulse the matching on-screen key without
+ *      intercepting the user's typing.
  */
+
 type Layout = "alpha" | "numeric";
 
 const ROWS_LOWER: string[][] = [
@@ -34,7 +34,7 @@ const NUM_ROWS: string[][] = [
   ["1", "2", "3"],
   ["4", "5", "6"],
   ["7", "8", "9"],
-  [".", "0", "⌫"],
+  [",", "0", "."],
 ];
 
 const isTypable = (el: Element | null): el is HTMLInputElement | HTMLTextAreaElement => {
@@ -55,10 +55,16 @@ const pickLayout = (el: HTMLInputElement | HTMLTextAreaElement): Layout => {
   return "alpha";
 };
 
-/**
- * Mutate the focused element's value by simulating user input so React's
- * synthetic onChange fires correctly (using the native value setter trick).
- */
+const isSearch = (el: HTMLInputElement | HTMLTextAreaElement): boolean => {
+  if (el.tagName !== "INPUT") return false;
+  const inp = el as HTMLInputElement;
+  if (inp.type === "search") return true;
+  if (inp.getAttribute("role") === "searchbox") return true;
+  const form = el.closest("form");
+  return form?.getAttribute("role") === "search";
+};
+
+/** Mutate the focused element's value via the native setter so React onChange fires. */
 const insertText = (el: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
@@ -108,27 +114,21 @@ type Props = {
 export const IOSKeyboard = ({ container }: Props) => {
   const [target, setTarget] = useState<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const [layout, setLayout] = useState<Layout>("alpha");
-  const [shift, setShift] = useState(true); // iOS auto-caps first letter
+  const [shift, setShift] = useState(true);
   const [pressed, setPressed] = useState<string | null>(null);
   const pressTimer = useRef<number | null>(null);
 
-  // Track focus inside the container (capture phase to catch focus before
-  // any custom blur handlers fire).
   useEffect(() => {
     if (!container) return;
-
     const onFocus = (e: FocusEvent) => {
       const t = e.target as Element | null;
       if (!isTypable(t)) return;
-      // Skip hidden inputs (e.g. checkbox shells used by Radix).
       if ((t as HTMLInputElement).readOnly) return;
       setTarget(t);
       setLayout(pickLayout(t));
       setShift(t.value.length === 0);
     };
     const onBlur = (e: FocusEvent) => {
-      // Delay so a click on a key (which steals focus briefly) doesn't
-      // dismiss the keyboard.
       const next = e.relatedTarget as Element | null;
       if (next && next.closest("[data-ios-keyboard]")) return;
       window.setTimeout(() => {
@@ -136,7 +136,6 @@ export const IOSKeyboard = ({ container }: Props) => {
         if (!isTypable(active)) setTarget(null);
       }, 0);
     };
-
     container.addEventListener("focusin", onFocus);
     container.addEventListener("focusout", onBlur);
     return () => {
@@ -145,19 +144,17 @@ export const IOSKeyboard = ({ container }: Props) => {
     };
   }, [container]);
 
-  // Push container content up while keyboard is visible. We set a CSS var
-  // on the container; it's consumed via inline padding-bottom on the inner
-  // scroll wrapper without touching every page.
+  // Push content up while keyboard is visible.
   useEffect(() => {
     if (!container) return;
-    const KB_HEIGHT = layout === "numeric" ? 260 : 300;
+    const KB_HEIGHT = layout === "numeric" ? 260 : 291;
     container.style.setProperty("--ios-kb-h", target ? `${KB_HEIGHT}px` : "0px");
     return () => {
       container.style.setProperty("--ios-kb-h", "0px");
     };
   }, [container, target, layout]);
 
-  // Hardware-keyboard echo: pulse the matching on-screen key.
+  // Hardware-key echo
   useEffect(() => {
     if (!target) return;
     const onKey = (e: KeyboardEvent) => {
@@ -187,7 +184,7 @@ export const IOSKeyboard = ({ container }: Props) => {
       setShift((s) => !s);
       return;
     }
-    if (key === "delete" || key === "⌫") {
+    if (key === "delete") {
       deleteBack(target);
       return;
     }
@@ -196,11 +193,9 @@ export const IOSKeyboard = ({ container }: Props) => {
       return;
     }
     if (key === "return") {
-      // Submit the surrounding form if any, otherwise just blur.
       const form = target.closest("form");
-      if (form) {
-        form.requestSubmit?.();
-      } else {
+      if (form) form.requestSubmit?.();
+      else {
         target.blur();
         setTarget(null);
       }
@@ -214,24 +209,30 @@ export const IOSKeyboard = ({ container }: Props) => {
       setLayout("alpha");
       return;
     }
+    if (key === "globe") return; // decorative
     insertText(target, shift && layout === "alpha" ? key.toUpperCase() : key);
     if (shift && layout === "alpha") setShift(false);
   };
 
   const rows = useMemo(() => (shift ? ROWS_UPPER : ROWS_LOWER), [shift]);
+  const returnLabel = target && isSearch(target) ? "Search" : "Return";
 
   if (!target) return null;
 
   return (
     <div
       data-ios-keyboard
-      // Tapping on the keyboard chrome shouldn't steal focus from the input.
       onMouseDown={(e) => e.preventDefault()}
       className="pointer-events-auto absolute inset-x-0 bottom-0 z-40 animate-slide-in-bottom select-none"
       style={{
-        background: "linear-gradient(180deg,hsl(220 14% 86%) 0%,hsl(220 14% 82%) 100%)",
-        boxShadow: "0 -8px 24px -10px rgba(0,0,0,0.25), 0 -1px 0 rgba(0,0,0,0.08) inset",
-        paddingBottom: "10px",
+        // Real iOS keyboard background — light grey with a subtle vertical wash.
+        background: "linear-gradient(180deg,#D1D5DB 0%,#CBD0D6 100%)",
+        boxShadow: "0 -1px 0 rgba(0,0,0,0.08) inset",
+        paddingTop: 6,
+        paddingBottom: 8,
+        // SF-ish system font stack.
+        fontFamily:
+          "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, sans-serif",
       }}
     >
       {layout === "alpha" ? (
@@ -239,133 +240,179 @@ export const IOSKeyboard = ({ container }: Props) => {
           rows={rows}
           shift={shift}
           pressed={pressed}
+          returnLabel={returnLabel}
           onKey={onTapKey}
         />
       ) : (
-        <NumericLayout pressed={pressed} onKey={onTapKey} />
+        <NumericLayout pressed={pressed} returnLabel={returnLabel} onKey={onTapKey} />
       )}
+
+      {/* Home indicator bar — completes the iPhone illusion. */}
+      <div className="mt-2 flex justify-center">
+        <span className="h-[5px] w-[120px] rounded-full bg-black/70" />
+      </div>
     </div>
   );
 };
 
-/* ────────────────────────── sub-components ────────────────────────── */
+/* ───────────────────────────── key cap ───────────────────────────── */
+
+type KeyVariant = "letter" | "system" | "action";
 
 const KeyCap = ({
-  label,
   id,
   pressed,
   flex = 1,
   variant = "letter",
+  height = 42,
+  fontSize = 22,
+  fontWeight = 400,
   onPress,
   children,
+  ariaLabel,
 }: {
-  label?: string;
   id: string;
   pressed: string | null;
   flex?: number;
-  variant?: "letter" | "modifier" | "action";
+  variant?: KeyVariant;
+  height?: number;
+  fontSize?: number;
+  fontWeight?: number;
   onPress: () => void;
-  children?: React.ReactNode;
+  children: React.ReactNode;
+  ariaLabel?: string;
 }) => {
   const active = pressed === id;
   const base =
     variant === "letter"
-      ? "bg-white text-[hsl(200_25%_12%)] shadow-[0_1px_0_rgba(0,0,0,0.35)]"
+      ? { bg: "#FFFFFF", color: "#000" }
       : variant === "action"
-        ? "bg-primary text-primary-foreground shadow-[0_1px_0_rgba(0,0,0,0.35)]"
-        : "bg-[hsl(220_8%_70%)] text-[hsl(200_25%_12%)] shadow-[0_1px_0_rgba(0,0,0,0.3)]";
+        ? { bg: "hsl(var(--primary))", color: "hsl(var(--primary-foreground))" }
+        : { bg: "#ADB3BC", color: "#000" }; // iOS system grey key
   return (
     <button
       type="button"
+      aria-label={ariaLabel}
       onClick={(e) => {
         e.preventDefault();
         onPress();
       }}
       onMouseDown={(e) => e.preventDefault()}
-      style={{ flex }}
-      className={`mx-[2px] grid h-[42px] place-items-center rounded-[6px] text-[18px] font-normal transition-transform ${base} ${
-        active ? "scale-95 brightness-90" : ""
-      }`}
+      style={{
+        flex,
+        height,
+        backgroundColor: base.bg,
+        color: base.color,
+        fontSize,
+        fontWeight,
+        borderRadius: 6,
+        boxShadow: "0 1px 0 rgba(0,0,0,0.35)",
+        transform: active ? "scale(0.94)" : "scale(1)",
+        filter: active ? "brightness(0.92)" : "none",
+        transition: "transform 90ms ease, filter 90ms ease",
+      }}
+      className="mx-[3px] grid place-items-center"
     >
-      {children ?? label}
+      {children}
     </button>
   );
 };
+
+/* ─────────────────────────── alpha layout ────────────────────────── */
 
 const AlphaLayout = ({
   rows,
   shift,
   pressed,
+  returnLabel,
   onKey,
 }: {
   rows: string[][];
   shift: boolean;
   pressed: string | null;
+  returnLabel: string;
   onKey: (k: string) => void;
 }) => (
-  <div className="px-1 pt-2">
-    {/* Row 1 — 10 letter keys */}
-    <div className="mb-[10px] flex">
+  <div className="px-[3px]">
+    {/* Row 1 — 10 keys, edge to edge */}
+    <div className="mb-[11px] flex">
       {rows[0].map((k) => (
-        <KeyCap key={k} id={k.toLowerCase()} label={k} pressed={pressed} onPress={() => onKey(k)} />
+        <KeyCap key={k} id={k.toLowerCase()} pressed={pressed} onPress={() => onKey(k)}>
+          {k}
+        </KeyCap>
       ))}
     </div>
-    {/* Row 2 — 9 letter keys with side gutters */}
-    <div className="mb-[10px] flex px-[18px]">
+
+    {/* Row 2 — 9 keys, ~half-key indent on each side */}
+    <div className="mb-[11px] flex" style={{ paddingLeft: 19, paddingRight: 19 }}>
       {rows[1].map((k) => (
-        <KeyCap key={k} id={k.toLowerCase()} label={k} pressed={pressed} onPress={() => onKey(k)} />
+        <KeyCap key={k} id={k.toLowerCase()} pressed={pressed} onPress={() => onKey(k)}>
+          {k}
+        </KeyCap>
       ))}
     </div>
-    {/* Row 3 — shift + 7 letters + delete */}
-    <div className="mb-[10px] flex">
+
+    {/* Row 3 — Shift · 7 letters · Backspace */}
+    <div className="mb-[11px] flex">
       <KeyCap
         id="shift"
         pressed={pressed}
-        variant="modifier"
-        flex={1.4}
+        variant="system"
+        flex={1.45}
+        ariaLabel="Shift"
         onPress={() => onKey("shift")}
       >
-        <span className={shift ? "text-[hsl(200_25%_12%)]" : "text-[hsl(200_25%_12%)]"}>
-          {shift ? "⇧" : "⇧"}
-        </span>
+        <ShiftIcon active={shift} />
       </KeyCap>
       <div className="flex flex-1">
         {rows[2].map((k) => (
-          <KeyCap
-            key={k}
-            id={k.toLowerCase()}
-            label={k}
-            pressed={pressed}
-            onPress={() => onKey(k)}
-          />
+          <KeyCap key={k} id={k.toLowerCase()} pressed={pressed} onPress={() => onKey(k)}>
+            {k}
+          </KeyCap>
         ))}
       </div>
       <KeyCap
         id="delete"
         pressed={pressed}
-        variant="modifier"
-        flex={1.4}
+        variant="system"
+        flex={1.45}
+        ariaLabel="Backspace"
         onPress={() => onKey("delete")}
       >
-        ⌫
+        <BackspaceIcon />
       </KeyCap>
     </div>
-    {/* Row 4 — 123 / space / return */}
+
+    {/* Row 4 — 123 · 🌐 · spacebar · return */}
     <div className="flex">
       <KeyCap
         id="123"
         pressed={pressed}
-        variant="modifier"
-        flex={1.3}
+        variant="system"
+        flex={1.4}
+        fontSize={16}
+        fontWeight={500}
         onPress={() => onKey("123")}
       >
         123
       </KeyCap>
       <KeyCap
+        id="globe"
+        pressed={pressed}
+        variant="system"
+        flex={1}
+        ariaLabel="Switch language"
+        onPress={() => onKey("globe")}
+      >
+        <GlobeIcon />
+      </KeyCap>
+      <KeyCap
         id="space"
         pressed={pressed}
         variant="letter"
-        flex={5}
+        flex={5.2}
+        fontSize={15}
+        fontWeight={400}
         onPress={() => onKey("space")}
       >
         space
@@ -374,34 +421,42 @@ const AlphaLayout = ({
         id="return"
         pressed={pressed}
         variant="action"
-        flex={1.6}
+        flex={2.4}
+        fontSize={16}
+        fontWeight={500}
         onPress={() => onKey("return")}
       >
-        <span className="text-[14px] font-semibold text-white">return</span>
+        {returnLabel}
       </KeyCap>
     </div>
   </div>
 );
 
+/* ────────────────────────── numeric layout ───────────────────────── */
+
 const NumericLayout = ({
   pressed,
+  returnLabel,
   onKey,
 }: {
   pressed: string | null;
+  returnLabel: string;
   onKey: (k: string) => void;
 }) => (
-  <div className="px-2 pt-2">
+  <div className="px-[3px]">
     {NUM_ROWS.map((row, idx) => (
-      <div key={idx} className="mb-[10px] flex">
+      <div key={idx} className="mb-[11px] flex">
         {row.map((k) => (
           <KeyCap
             key={k}
-            id={k === "⌫" ? "delete" : k}
-            label={k}
+            id={k}
             pressed={pressed}
-            variant={k === "⌫" ? "modifier" : "letter"}
-            onPress={() => onKey(k === "⌫" ? "delete" : k)}
-          />
+            variant="letter"
+            fontSize={26}
+            onPress={() => onKey(k)}
+          >
+            {k}
+          </KeyCap>
         ))}
       </div>
     ))}
@@ -409,21 +464,58 @@ const NumericLayout = ({
       <KeyCap
         id="ABC"
         pressed={pressed}
-        variant="modifier"
+        variant="system"
         flex={1}
+        fontSize={16}
+        fontWeight={500}
         onPress={() => onKey("ABC")}
       >
         ABC
       </KeyCap>
       <KeyCap
+        id="delete"
+        pressed={pressed}
+        variant="system"
+        flex={1}
+        ariaLabel="Backspace"
+        onPress={() => onKey("delete")}
+      >
+        <BackspaceIcon />
+      </KeyCap>
+      <KeyCap
         id="return"
         pressed={pressed}
         variant="action"
-        flex={2}
+        flex={1}
+        fontSize={16}
+        fontWeight={500}
         onPress={() => onKey("return")}
       >
-        <span className="text-[14px] font-semibold text-white">return</span>
+        {returnLabel}
       </KeyCap>
     </div>
   </div>
+);
+
+/* ──────────────────────────── glyph icons ────────────────────────── */
+
+const ShiftIcon = ({ active }: { active: boolean }) => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? "#000" : "none"} stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3 L21 12 H16 V21 H8 V12 H3 Z" />
+  </svg>
+);
+
+const BackspaceIcon = () => (
+  <svg width="24" height="20" viewBox="0 0 24 20" fill="none" stroke="#000" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 4 H9 L2 10 L9 16 H22 Z" />
+    <path d="M14 8 L19 13 M19 8 L14 13" />
+  </svg>
+);
+
+const GlobeIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12 H21" />
+    <path d="M12 3 C16 7 16 17 12 21 C8 17 8 7 12 3 Z" />
+  </svg>
 );
