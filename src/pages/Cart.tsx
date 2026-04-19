@@ -13,9 +13,6 @@ import { CartRecommendations } from "@/components/cart/CartRecommendations";
 import {
   CartDeliveryCard,
   CartApprovalCard,
-  CartVolumeTiersCard,
-  CartOrderMetaCard,
-  type OrderMeta,
 } from "@/components/cart/CartInfoCards";
 import {
   buildOptimisticRecentProducts,
@@ -31,27 +28,11 @@ const Cart = () => {
   const [submitting, setSubmitting] = useState(false);
   const [minApproval, setMinApproval] = useState<number>(0);
 
-  // Editable order metadata. Project number is seeded from the active
-  // project once we've matched it; the user can override anything before
-  // submitting. Note is appended to the existing project-code note.
   const project = useMemo(
     () => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0],
     [projectId],
   );
-  const [meta, setMeta] = useState<OrderMeta>({
-    costCenter: "",
-    projectNumber: project.code ?? "",
-    note: "",
-  });
-  // Keep projectNumber in sync if the active project changes mid-session,
-  // but only when the user hasn't typed something custom.
-  useEffect(() => {
-    setMeta((prev) =>
-      prev.projectNumber === "" || PROJECTS.some((p) => p.code === prev.projectNumber)
-        ? { ...prev, projectNumber: project.code ?? "" }
-        : prev,
-    );
-  }, [project.code]);
+  
 
   // Fast workflow: an empty cart should never sit on /cart — bounce straight
   // back to the search page so the next add is one tap away. Skip the bounce
@@ -108,15 +89,7 @@ const Cart = () => {
       const liveTotal = cartTotal(cart);
       const status = decideInitialStatus(liveTotal, liveThreshold);
 
-      // Stitch user-entered metadata into the notes column so the data
-      // survives even before we add dedicated columns for it.
-      const noteParts = [
-        meta.projectNumber ? `Projekt ${meta.projectNumber}` : null,
-        meta.costCenter ? `Kostenstelle ${meta.costCenter}` : null,
-        meta.note?.trim() ? meta.note.trim() : null,
-      ].filter(Boolean);
-      const composedNote =
-        noteParts.length > 0 ? noteParts.join(" · ") : project.code ? `Project ${project.code}` : null;
+      const composedNote = project.code ? `Project ${project.code}` : null;
 
       const optimisticRecent = buildOptimisticRecentProducts(cart);
       queryClient.setQueryData<RecentOrderedProduct[]>(
@@ -207,8 +180,6 @@ const Cart = () => {
             threshold={minApproval > 0 ? minApproval : 100}
             needsApproval={needsApproval}
           />
-          <CartVolumeTiersCard />
-          <CartOrderMetaCard value={meta} onChange={setMeta} />
         </div>
       </main>
 
