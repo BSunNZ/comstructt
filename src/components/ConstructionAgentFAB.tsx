@@ -81,8 +81,8 @@ export function ConstructionAgentFAB() {
     setBusy(true);
     setError(null);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke("search-kits", {
-        body: { query: q, projectId, areaM2, matchCount: 3 },
+      const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
+        body: { action: "search", query: q, projectId, areaM2, matchCount: 3 },
       });
       if (id !== reqIdRef.current) return; // stale
       if (fnError) throw fnError;
@@ -113,8 +113,8 @@ export function ConstructionAgentFAB() {
     if (syncing || !isSupabaseConfigured) return;
     setSyncing(true);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke("sync-kit-embeddings", {
-        body: {},
+      const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
+        body: { action: "sync" },
       });
       if (fnError) throw fnError;
       const synced = typeof data?.synced === "number" ? data.synced : 0;
