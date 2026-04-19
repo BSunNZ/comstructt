@@ -668,9 +668,10 @@ const OrderSearch = () => {
         )}
       </main>
 
-      {/* Sticky cart CTA — sticks to the bottom of the scroll container so
-          users can scroll through results while it stays in view. */}
-      <div className="sticky bottom-0 z-30 mx-auto mt-auto w-full max-w-[430px] border-t border-border bg-background/95 px-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-3 backdrop-blur">
+      {/* Fixed cart CTA — pinned to the bottom of the viewport (or the phone
+          screen on desktop, since DeviceFrame creates a containing block via
+          translateZ). Stays put while the product list scrolls underneath. */}
+      <div className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-[430px] border-t border-border bg-background/95 px-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <button
           onClick={() => nav("/cart")}
           disabled={cartCount === 0}
