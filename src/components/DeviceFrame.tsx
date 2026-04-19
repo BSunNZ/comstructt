@@ -126,14 +126,15 @@ export const DeviceFrame = ({ children }: { children: ReactNode }) => {
                 }}
               >
                 {/* The actual app content.
-                    `transform: translateZ(0)` turns this into a containing
-                    block for `position: fixed` descendants, so the in-app
-                    sticky cart bars get pinned to the iPhone screen
-                    instead of escaping out to the viewport. */}
-                <div
-                  className="absolute inset-0 overflow-y-auto overflow-x-hidden"
-                  style={{ transform: "translateZ(0)" }}
-                >
+                    NOTE: do NOT put `transform` on this scroll wrapper —
+                    that would make it the containing block for any
+                    `position: fixed` children inside the app, causing
+                    bottom-pinned bars (cart CTA, action footers) to stick
+                    to the bottom of the SCROLLED content instead of the
+                    phone screen. The OUTER wrapper above already has
+                    `translateZ(0)` to anchor fixed descendants to the
+                    phone screen, which is what we want. */}
+                <div className="absolute inset-0 overflow-y-auto overflow-x-hidden">
                   <PortalContainerContext.Provider value={portalEl}>
                     {children}
                   </PortalContainerContext.Provider>
