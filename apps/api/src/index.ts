@@ -42,6 +42,7 @@ import {
   listCatalogItems,
   listImports,
   listProjects,
+  getSpendAnalytics,
   listProcurementOrders,
   previewProjectPriceImport,
   updateProcurementOrderSettings,
@@ -229,6 +230,17 @@ app.get("/api/projects", async (_request, response, next) => {
     const payload: ProjectsListResponse = {
       projects: await listProjects(),
     };
+    response.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/analytics/spend", async (request, response, next) => {
+  try {
+    const raw = typeof request.query.projectIds === "string" ? request.query.projectIds : undefined;
+    const projectIds = raw ? String(raw).split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+    const payload = await getSpendAnalytics(projectIds);
     response.json(payload);
   } catch (error) {
     next(error);

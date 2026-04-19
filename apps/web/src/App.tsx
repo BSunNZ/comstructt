@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+// Currency formatter for UI display (EUR)
+const EUR_FORMATTER = new Intl.NumberFormat("de-DE", {
+  style: "currency",
+  currency: "EUR",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 import {
   APPROVAL_ROUTES,
   type ConfirmProjectPriceImportResponse,
@@ -35,14 +42,18 @@ import {
   type ProjectPriceImportMapping,
   type ProjectPriceImportPreviewResponse,
   type ProjectSummary,
+  type SpendAnalyticsDetail,
+  type SpendAnalyticsProject,
+  type SpendAnalyticsResponse,
   type UpdateCatalogItemInput,
 } from "@comstruct/shared";
 import { createProject, listProjects } from "./lib/projects";
 
 // Use relative /api by default so Vite proxy handles local dev ports safely.
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
+const ORDER_LAST_SEEN_STORAGE_KEY = "comstruct.orders.lastSeenAt";
 
-type ViewKey = "imports" | "projects" | "orders" | "catalog" | "supplierData" | "database";
+type ViewKey = "imports" | "projects" | "orders" | "spendAnalytics" | "catalog" | "supplierData" | "database";
 
 type CatalogFilterState = {
   supplier: string;
@@ -52,25 +63,52 @@ type CatalogFilterState = {
 
 type OrderStatusFilter = OrderStatus | "all";
 type OrderProjectFilter = "all" | string;
-type ToolbarDateRange = "15d" | "1m" | "6m";
-type ImportStatusFilter = "all" | ImportBatchSummary["status"];
 
-function getToolbarRangeStart(range: ToolbarDateRange): number {
-  const now = new Date();
-  const start = new Date(now);
+function tokenizeSearchTerms(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length > 0);
+}
 
-  if (range === "15d") {
-    start.setDate(now.getDate() - 15);
-    return start.getTime();
+function renderHighlightedText(value: string, terms: string[]): ReactNode {
+  if (terms.length === 0) {
+    return value;
   }
 
-  if (range === "1m") {
-    start.setMonth(now.getMonth() - 1);
-    return start.getTime();
-  }
+  const tokens = value.split(/(\s+|[.,;:/()\-]+)/);
+  return tokens.map((token, index) => {
+    const comparable = token.toLowerCase();
+    const matches = terms.some((term) => comparable.includes(term));
 
-  start.setMonth(now.getMonth() - 6);
-  return start.getTime();
+    if (!matches || /^\s+$/.test(token)) {
+      return <span key={`${token}-${index}`}>{token}</span>;
+    }
+
+    return (
+      <strong key={`${token}-${index}`} className="catalog-highlight">
+        {token}
+      </strong>
+    );
+  });
+}
+
+function autoMapAiSubcategoryPreview(mapping: CsvImportMapping[]): CsvImportMapping[] {
+  let changed = false;
+  const next: CsvImportMapping[] = mapping.map((entry) => {
+    if (entry.sourceColumn !== "AI Subcategory (Preview)" || entry.target !== "ignore") {
+      return entry;
+    }
+
+    changed = true;
+    return {
+      ...entry,
+      target: "subcategory",
+    };
+  });
+
+  return changed ? next : mapping;
 }
 
 function formatProjectLocation(project: Pick<ProjectSummary, "address" | "zipCode" | "city">): string | null {
@@ -146,6 +184,14 @@ function SidebarIcon({ view }: { view: ViewKey }) {
           strokeLinecap="round"
           strokeLinejoin="round"
         />
+      </svg>
+    );
+  }
+
+  if (view === "spendAnalytics") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 12h18M3 6h10M3 18h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     );
   }
@@ -291,6 +337,41 @@ function serializeCellValue(value: unknown): string {
   return String(value);
 }
 
+function deriveDatabaseFallbackValue(column: DatabaseColumnDefinition, row: DatabaseRow): string {
+  // Simple heuristics to produce useful fallback values for empty project fields
+  const lc = column.name.toLowerCase();
+
+  // Prefer other fields on the same row
+  if (lc.includes("city")) {
+    const addr = typeof row.address === "string" ? row.address : undefined;
+    return (
+      String(row.city || row.town || (addr ? addr.split(",")[1] : undefined)) ||
+      `[missing ${column.label}]`
+    );
+  }
+
+  if (lc.includes("zip") || lc.includes("postal")) {
+    const addr = typeof row.address === "string" ? row.address : undefined;
+    const addrZip = addr ? addr.match(/\b\d{4,6}\b/)?.[0] : undefined;
+    return String(row.zip || row.postal_code || row.zip_code || addrZip) || `[missing ${column.label}]`;
+  }
+
+  if (lc.includes("address") || lc.includes("street")) {
+    return String(row.address || row.street || row.location) || `[missing ${column.label}]`;
+  }
+
+  if (lc.includes("name") || lc.includes("project")) {
+    return String(row.project_name || row.name) || `[missing ${column.label}]`;
+  }
+
+  if (column.type === "number") {
+    return "0"; // recognizable numeric placeholder
+  }
+
+  // Generic recognizable placeholder
+  return `[missing ${column.label}]`;
+}
+
 function getRowId(row: DatabaseRow, table: DatabaseTableDefinition): string {
   return String(row[table.primaryKey] ?? "");
 }
@@ -335,6 +416,7 @@ export default function App() {
   const [drafts, setDrafts] = useState<Record<string, CatalogItem>>({});
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
+  const [selectedProjectPriceFile, setSelectedProjectPriceFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<CsvImportPreviewResponse | null>(null);
   const [projectPricePreview, setProjectPricePreview] =
     useState<ProjectPriceImportPreviewResponse | null>(null);
@@ -346,6 +428,16 @@ export default function App() {
     DEFAULT_DERIVED_FIELD_MAPPINGS
   );
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedAnalyticsProjectIds, setSelectedAnalyticsProjectIds] = useState<string[]>([]);
+  const [analyticsData, setAnalyticsData] = useState<SpendAnalyticsProject[]>([]);
+  const [analyticsDetails, setAnalyticsDetails] = useState<SpendAnalyticsDetail[]>([]);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
+  const [analyticsSortBy, setAnalyticsSortBy] = useState<"attention" | "spend_desc" | "spend_asc" | "newest" | "oldest">("attention");
+  const [analyticsSplitByProject, setAnalyticsSplitByProject] = useState(true);
+  const [analyticsSearchQuery, setAnalyticsSearchQuery] = useState("");
+  const [analyticsCategoryFilter, setAnalyticsCategoryFilter] = useState<string>("all");
+  const [analyticsSupplierFilter, setAnalyticsSupplierFilter] = useState<string>("all");
+  const [analyticsTimeFilter, setAnalyticsTimeFilter] = useState<"all" | "30d" | "90d">("all");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectCity, setNewProjectCity] = useState("");
@@ -356,9 +448,7 @@ export default function App() {
   const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
   const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatusFilter>("pending_approval");
   const [orderProjectFilter, setOrderProjectFilter] = useState<OrderProjectFilter>("all");
-  const [toolbarSearchQuery, setToolbarSearchQuery] = useState("");
-  const [toolbarDateRange, setToolbarDateRange] = useState<ToolbarDateRange>("6m");
-  const [toolbarImportStatus, setToolbarImportStatus] = useState<ImportStatusFilter>("all");
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState("");
   const [filters, setFilters] = useState<CatalogFilterState>({
@@ -393,11 +483,172 @@ export default function App() {
   const [editingDatabaseCell, setEditingDatabaseCell] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [showImportHistory, setShowImportHistory] = useState(false);
+  const [unreadOrderCount, setUnreadOrderCount] = useState(0);
+  const [orderToastMessage, setOrderToastMessage] = useState<string | null>(null);
+  const ordersInitializedRef = useRef(false);
+  const orderToastTimeoutRef = useRef<number | null>(null);
+  const previousOrderStatusesRef = useRef<Map<string, OrderStatus>>(new Map());
+
+  // Clear transient banners when the user switches views/categories
+  useEffect(() => {
+    setError(null);
+    setSuccess(null);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (activeView === "supplierData" || activeView === "database") {
+      setActiveView("orders");
+    }
+  }, [activeView]);
 
   async function loadImports() {
     const response = await fetch(`${API_BASE}/imports`);
     const payload = await readJson<ImportBatchListResponse>(response);
     setImports(payload.imports);
+  }
+
+  function readStoredLastSeenOrderTs(): number | null {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const raw = window.localStorage.getItem(ORDER_LAST_SEEN_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function latestOrderTs(orderList: ProcurementOrder[]): number | null {
+    if (orderList.length === 0) {
+      return null;
+    }
+
+    let latest: number | null = null;
+    for (const order of orderList) {
+      const createdAtTs = Date.parse(order.createdAt);
+      if (!Number.isFinite(createdAtTs)) {
+        continue;
+      }
+
+      latest = latest == null ? createdAtTs : Math.max(latest, createdAtTs);
+    }
+
+    return latest;
+  }
+
+  function writeLastSeenOrderTs(ts: number | null): void {
+    if (typeof window === "undefined" || ts == null || !Number.isFinite(ts)) {
+      return;
+    }
+
+    window.localStorage.setItem(ORDER_LAST_SEEN_STORAGE_KEY, new Date(ts).toISOString());
+  }
+
+  function showOrderToast(message: string): void {
+    setOrderToastMessage(message);
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (orderToastTimeoutRef.current != null) {
+      window.clearTimeout(orderToastTimeoutRef.current);
+    }
+
+    orderToastTimeoutRef.current = window.setTimeout(() => {
+      setOrderToastMessage(null);
+      orderToastTimeoutRef.current = null;
+    }, 4500);
+  }
+
+  function dismissOrderToast(): void {
+    setOrderToastMessage(null);
+
+    if (typeof window !== "undefined" && orderToastTimeoutRef.current != null) {
+      window.clearTimeout(orderToastTimeoutRef.current);
+      orderToastTimeoutRef.current = null;
+    }
+  }
+
+  function applyOrdersSnapshot(nextOrders: ProcurementOrder[], options?: { notify?: boolean }): void {
+    setOrders(nextOrders);
+
+    const notify = options?.notify ?? true;
+    const latestTs = latestOrderTs(nextOrders);
+    const previousStatuses = previousOrderStatusesRef.current;
+    const nextStatuses = new Map<string, OrderStatus>();
+    const newlyPlacedOrders = nextOrders.filter((order) => {
+      nextStatuses.set(order.id, order.status);
+      const previous = previousStatuses.get(order.id);
+      return previous !== undefined && previous !== "ordered" && order.status === "ordered";
+    });
+
+    if (!ordersInitializedRef.current) {
+      const storedTs = readStoredLastSeenOrderTs();
+      if (storedTs == null) {
+        writeLastSeenOrderTs(latestTs);
+        setUnreadOrderCount(0);
+      } else {
+        const unread = nextOrders.filter((order) => {
+          const ts = Date.parse(order.createdAt);
+          return Number.isFinite(ts) && ts > storedTs;
+        }).length;
+        setUnreadOrderCount(activeView === "orders" ? 0 : unread);
+      }
+
+      ordersInitializedRef.current = true;
+      previousOrderStatusesRef.current = nextStatuses;
+      return;
+    }
+
+    const storedTs = readStoredLastSeenOrderTs();
+    const referenceTs = storedTs ?? latestTs;
+    const newOrders =
+      referenceTs == null
+        ? []
+        : nextOrders.filter((order) => {
+            const ts = Date.parse(order.createdAt);
+            return Number.isFinite(ts) && ts > referenceTs;
+          });
+
+    const signalCount = newOrders.length + newlyPlacedOrders.length;
+
+    if (activeView === "orders") {
+      writeLastSeenOrderTs(latestTs);
+      setUnreadOrderCount(0);
+      previousOrderStatusesRef.current = nextStatuses;
+      return;
+    }
+
+    if (signalCount > 0) {
+      setUnreadOrderCount((current) => Math.max(current, signalCount));
+      if (notify) {
+        if (newlyPlacedOrders.length > 0) {
+          showOrderToast(
+            newlyPlacedOrders.length === 1
+              ? `Order placed: ${newlyPlacedOrders[0].projectName}.`
+              : `${newlyPlacedOrders.length} orders were just placed.`
+          );
+        } else {
+          showOrderToast(
+            newOrders.length === 1
+              ? `New order received for ${newOrders[0].projectName}.`
+              : `${newOrders.length} new orders received.`
+          );
+        }
+      }
+    }
+
+    previousOrderStatusesRef.current = nextStatuses;
+  }
+
+  function markOrdersAsSeen(): void {
+    const latestTs = latestOrderTs(orders);
+    writeLastSeenOrderTs(latestTs);
+    setUnreadOrderCount(0);
   }
 
   async function loadProjects() {
@@ -449,7 +700,7 @@ export default function App() {
       const ordersPayload = await readJson<ProcurementOrdersResponse>(ordersResponse);
       const catalogPayload = await readJson<CatalogListResponse>(catalogResponse);
 
-      setOrders(ordersPayload.orders);
+      applyOrdersSnapshot(ordersPayload.orders, { notify: false });
       setOrderSettings(ordersPayload.settings);
       setOrderCatalogItems(catalogPayload.items);
     } finally {
@@ -476,6 +727,25 @@ export default function App() {
     }
   }
 
+  async function loadSpendAnalytics(projectIds?: string[]) {
+    setIsAnalyticsLoading(true);
+    try {
+      const qs = projectIds && projectIds.length > 0 ? `?projectIds=${projectIds.join(",")}` : "";
+      const res = await fetch(`${API_BASE}/analytics/spend${qs}`);
+      const payload = await readJson<SpendAnalyticsResponse>(res);
+      setAnalyticsData(payload.projects);
+      setAnalyticsDetails(payload.details);
+      // Default to all projects selected when opening analytics for the first time.
+      setSelectedAnalyticsProjectIds((current) =>
+        current.length === 0 ? payload.projects.map((p) => p.projectId) : current
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load analytics.");
+    } finally {
+      setIsAnalyticsLoading(false);
+    }
+  }
+
   useEffect(() => {
     void (async () => {
       try {
@@ -491,7 +761,7 @@ export default function App() {
             try {
               const ordersResp = await fetch(`${API_BASE}/procurement-orders`);
               const ordersPayload = await readJson<ProcurementOrdersResponse>(ordersResp);
-              setOrders(ordersPayload.orders);
+              applyOrdersSnapshot(ordersPayload.orders, { notify: false });
             } catch {
               // Ignore order load failure here; the full workspace will load on demand.
             }
@@ -545,12 +815,14 @@ export default function App() {
     }
 
     setSelectedFile(null);
+    setSelectedPdfFile(null);
+    setSelectedProjectPriceFile(null);
     setError(null);
     setSuccess(null);
     setPreview(null);
     setProjectPricePreview(null);
     setProjectPriceMappingDraft([]);
-  }, [activeView, orderProjectId]);
+  }, [activeView]);
 
   useEffect(() => {
     if (activeView !== "orders") {
@@ -567,6 +839,51 @@ export default function App() {
       }
     })();
   }, [activeView]);
+
+  useEffect(() => {
+    if (!ordersInitializedRef.current || activeView !== "orders") {
+      return;
+    }
+
+    markOrdersAsSeen();
+  }, [activeView, orders]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const pollOrders = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/procurement-orders`);
+        const payload = await readJson<ProcurementOrdersResponse>(response);
+        if (cancelled) {
+          return;
+        }
+
+        applyOrdersSnapshot(payload.orders, { notify: true });
+      } catch {
+        // Silent poll failure; foreground workflows handle visible errors.
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void pollOrders();
+    }, 5000);
+
+    void pollOrders();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeView]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && orderToastTimeoutRef.current != null) {
+        window.clearTimeout(orderToastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (activeView !== "supplierData" || selectedDatabaseTable === "suppliers") {
@@ -600,9 +917,21 @@ export default function App() {
     })();
   }, [activeView, selectedDatabaseTable]);
 
+  useEffect(() => {
+    if (activeView !== "spendAnalytics") {
+      return;
+    }
+
+    void loadSpendAnalytics();
+  }, [activeView]);
+
   const supplierOptions = useMemo(
     () => Array.from(new Set(catalogItems.map((item) => item.supplierName))).sort(),
     [catalogItems]
+  );
+  const catalogSearchTerms = useMemo(
+    () => tokenizeSearchTerms(catalogSearchQuery),
+    [catalogSearchQuery]
   );
 
   const subcategoryOptions = useMemo(
@@ -646,9 +975,228 @@ export default function App() {
           return false;
         }
 
+        if (catalogSearchTerms.length > 0) {
+          const haystack = [
+            item.supplierName,
+            item.supplierSku,
+            row.displayName,
+            item.sourceName,
+            item.familyName,
+            item.variantLabel,
+            row.normalizedCategory,
+            item.subcategory,
+            item.consumptionType,
+            item.typicalSite,
+          ]
+            .join(" ")
+            .toLowerCase();
+
+          if (!catalogSearchTerms.every((term) => haystack.includes(term))) {
+            return false;
+          }
+        }
+
         return true;
       }),
-    [catalogItems, drafts, filters]
+    [catalogItems, drafts, filters, catalogSearchTerms]
+  );
+
+  const analyticsCategoryOptions = useMemo(
+    () =>
+      Array.from(new Set(analyticsDetails.map((detail) => detail.category).filter(Boolean))).sort(
+        (left, right) => left.localeCompare(right)
+      ),
+    [analyticsDetails]
+  );
+
+  const analyticsSupplierOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          analyticsDetails.map((detail) => detail.supplierName).filter((name) => name && name !== "Unknown supplier")
+        )
+      ).sort((left, right) => left.localeCompare(right)),
+    [analyticsDetails]
+  );
+
+  const portfolioSortedProjects = useMemo(() => {
+    const visible = analyticsData.filter((project) => selectedAnalyticsProjectIds.includes(project.projectId));
+
+    return visible.slice().sort((left, right) => {
+      const leftOverspend = Math.max(0, left.actualSpend - left.budgetTotal);
+      const rightOverspend = Math.max(0, right.actualSpend - right.budgetTotal);
+      const leftOverBudget = leftOverspend > 0;
+      const rightOverBudget = rightOverspend > 0;
+
+      if (leftOverBudget !== rightOverBudget) {
+        return leftOverBudget ? -1 : 1;
+      }
+
+      if (rightOverspend !== leftOverspend) {
+        return rightOverspend - leftOverspend;
+      }
+
+      const leftOverspendPct = left.budgetTotal > 0 ? leftOverspend / left.budgetTotal : 0;
+      const rightOverspendPct = right.budgetTotal > 0 ? rightOverspend / right.budgetTotal : 0;
+      if (rightOverspendPct !== leftOverspendPct) {
+        return rightOverspendPct - leftOverspendPct;
+      }
+
+      if (right.actualSpend !== left.actualSpend) {
+        return right.actualSpend - left.actualSpend;
+      }
+
+      return right.budgetTotal - left.budgetTotal;
+    });
+  }, [analyticsData, selectedAnalyticsProjectIds]);
+
+  const filteredAnalyticsDetails = useMemo(() => {
+    const searchTerms = tokenizeSearchTerms(analyticsSearchQuery);
+    const now = Date.now();
+    const windowMs =
+      analyticsTimeFilter === "30d"
+        ? 30 * 24 * 60 * 60 * 1000
+        : analyticsTimeFilter === "90d"
+          ? 90 * 24 * 60 * 60 * 1000
+          : null;
+
+    return analyticsDetails.filter((entry) => {
+      if (!selectedAnalyticsProjectIds.includes(entry.projectId)) {
+        return false;
+      }
+
+      if (analyticsCategoryFilter !== "all" && entry.category !== analyticsCategoryFilter) {
+        return false;
+      }
+
+      if (analyticsSupplierFilter !== "all" && entry.supplierName !== analyticsSupplierFilter) {
+        return false;
+      }
+
+      if (windowMs != null) {
+        const orderedAtMs = Date.parse(entry.orderedAt);
+        if (!Number.isFinite(orderedAtMs) || now - orderedAtMs > windowMs) {
+          return false;
+        }
+      }
+
+      if (searchTerms.length === 0) {
+        return true;
+      }
+
+      const haystack = [
+        entry.projectName,
+        entry.orderId,
+        entry.orderStatus,
+        entry.supplierName,
+        entry.category,
+        entry.subcategory ?? "",
+        entry.itemName,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchTerms.every((term) => haystack.includes(term));
+    });
+  }, [
+    analyticsCategoryFilter,
+    analyticsDetails,
+    analyticsSearchQuery,
+    analyticsSupplierFilter,
+    analyticsTimeFilter,
+    selectedAnalyticsProjectIds,
+  ]);
+
+  const buildAnalyticsRows = (
+    entries: SpendAnalyticsDetail[],
+    groupBy: "order" | "category" | "supplier" | "status"
+  ) => {
+    const grouped = new Map<
+      string,
+      { label: string; total: number; latestOrderAt: number; entries: SpendAnalyticsDetail[] }
+    >();
+
+    for (const entry of entries) {
+      const key =
+        groupBy === "order"
+          ? entry.orderId
+          : groupBy === "category"
+            ? entry.category
+            : groupBy === "supplier"
+              ? entry.supplierName
+              : entry.orderStatus;
+      const label =
+        groupBy === "order"
+          ? `${entry.orderId.slice(0, 8)} · ${entry.orderStatus}`
+          : groupBy === "category"
+            ? entry.category
+            : groupBy === "supplier"
+              ? entry.supplierName
+              : entry.orderStatus.replace("_", " ");
+      const current = grouped.get(key);
+      const orderAtMs = Date.parse(entry.orderedAt);
+
+      if (current) {
+        current.total += entry.lineTotal;
+        current.latestOrderAt = Math.max(current.latestOrderAt, Number.isFinite(orderAtMs) ? orderAtMs : 0);
+        current.entries.push(entry);
+      } else {
+        grouped.set(key, {
+          label,
+          total: entry.lineTotal,
+          latestOrderAt: Number.isFinite(orderAtMs) ? orderAtMs : 0,
+          entries: [entry],
+        });
+      }
+    }
+
+    const rows = Array.from(grouped.entries()).map(([key, value]) => ({ key, ...value }));
+    rows.sort((left, right) => {
+      if (analyticsSortBy === "spend_asc") {
+        return left.total - right.total;
+      }
+
+      if (analyticsSortBy === "newest") {
+        return right.latestOrderAt - left.latestOrderAt;
+      }
+
+      if (analyticsSortBy === "oldest") {
+        return left.latestOrderAt - right.latestOrderAt;
+      }
+
+      if (analyticsSortBy === "attention") {
+        const leftRejected = left.entries.some((entry) => entry.orderStatus === "rejected");
+        const rightRejected = right.entries.some((entry) => entry.orderStatus === "rejected");
+        if (leftRejected !== rightRejected) {
+          return rightRejected ? 1 : -1;
+        }
+      }
+
+      return right.total - left.total;
+    });
+
+    return rows;
+  };
+
+  const analyticsProjectOrderGroups = useMemo(() => {
+    return portfolioSortedProjects.map((project) => {
+      const projectEntries = filteredAnalyticsDetails.filter((entry) => entry.projectId === project.projectId);
+      const orderRows = buildAnalyticsRows(projectEntries, "order");
+      const orders = orderRows.map((row) => ({
+        ...row,
+        status: row.entries[0]?.orderStatus ?? "draft",
+      }));
+
+      return {
+        project,
+        orders,
+      };
+    });
+  }, [analyticsSortBy, filteredAnalyticsDetails, portfolioSortedProjects]);
+
+  const analyticsPortfolioRows = useMemo(
+    () => buildAnalyticsRows(filteredAnalyticsDetails, "category"),
+    [analyticsSortBy, filteredAnalyticsDetails]
   );
 
   const pendingCatalogSaves = useMemo(
@@ -671,15 +1219,6 @@ export default function App() {
     [catalogItems, drafts]
   );
 
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) ?? null,
-    [projects, selectedProjectId]
-  );
-  const selectedProjectLocation = useMemo(
-    () => (selectedProject ? formatProjectLocation(selectedProject) : null),
-    [selectedProject]
-  );
-
   const selectedOrderProject = useMemo(
     () => projects.find((project) => project.id === orderProjectId) ?? null,
     [orderProjectId, projects]
@@ -688,7 +1227,7 @@ export default function App() {
   useEffect(() => {
     setProjectPricePreview(null);
     setProjectPriceMappingDraft([]);
-  }, [selectedFile, selectedProjectId]);
+  }, [selectedProjectPriceFile, selectedProjectId]);
 
   const selectedOrderItems = useMemo(
     () =>
@@ -759,10 +1298,20 @@ export default function App() {
   );
 
   const filteredOrders = useMemo(
-    () =>
-      orderStatusFilter === "all"
-        ? projectFilteredOrders
-        : projectFilteredOrders.filter((order) => order.status === orderStatusFilter),
+    () => {
+      const base =
+        orderStatusFilter === "all"
+          ? projectFilteredOrders
+          : projectFilteredOrders.filter((order) => order.status === orderStatusFilter);
+
+      return base.slice().sort((left, right) => {
+        const leftTs = Date.parse(left.orderedAt ?? left.createdAt);
+        const rightTs = Date.parse(right.orderedAt ?? right.createdAt);
+        const leftSafe = Number.isFinite(leftTs) ? leftTs : 0;
+        const rightSafe = Number.isFinite(rightTs) ? rightTs : 0;
+        return rightSafe - leftSafe;
+      });
+    },
     [orderStatusFilter, projectFilteredOrders]
   );
 
@@ -775,102 +1324,7 @@ export default function App() {
     }
   }, [orderProjectFilter, orderProjectOptions]);
 
-  const normalizedToolbarSearch = useMemo(
-    () => toolbarSearchQuery.trim().toLowerCase(),
-    [toolbarSearchQuery]
-  );
-
-  const filteredImports = useMemo(() => {
-    const rangeStart = getToolbarRangeStart(toolbarDateRange);
-
-    return imports.filter((item) => {
-      const createdAtMs = Date.parse(item.createdAt);
-      const inRange = Number.isNaN(createdAtMs) ? true : createdAtMs >= rangeStart;
-      if (!inRange) {
-        return false;
-      }
-
-      if (toolbarImportStatus !== "all" && item.status !== toolbarImportStatus) {
-        return false;
-      }
-
-      if (normalizedToolbarSearch.length === 0) {
-        return true;
-      }
-
-      const haystack = [
-        item.id,
-        item.fileName,
-        item.status,
-        item.supplierNames.join(" "),
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(normalizedToolbarSearch);
-    });
-  }, [imports, normalizedToolbarSearch, toolbarDateRange, toolbarImportStatus]);
-
-  const filteredProjects = useMemo(() => {
-    const rangeStart = getToolbarRangeStart(toolbarDateRange);
-
-    return projects.filter((project) => {
-      const createdAtMs = Date.parse(project.createdAt);
-      const inRange = Number.isNaN(createdAtMs) ? true : createdAtMs >= rangeStart;
-      if (!inRange) {
-        return false;
-      }
-
-      if (normalizedToolbarSearch.length === 0) {
-        return true;
-      }
-
-      const haystack = [
-        project.id,
-        project.name,
-        project.city ?? "",
-        project.zipCode ?? "",
-        project.address ?? "",
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(normalizedToolbarSearch);
-    });
-  }, [normalizedToolbarSearch, projects, toolbarDateRange]);
-
-  const filteredProjectRows = useMemo(() => {
-    if (activeView !== "projects") {
-      return databaseRows;
-    }
-
-    const rangeStart = getToolbarRangeStart(toolbarDateRange);
-
-    return databaseRows.filter((row) => {
-      const createdAtValue = String(row.created_at ?? row.createdAt ?? "");
-      const createdAtMs = Date.parse(createdAtValue);
-      const inRange = Number.isNaN(createdAtMs) ? true : createdAtMs >= rangeStart;
-      if (!inRange) {
-        return false;
-      }
-
-      if (normalizedToolbarSearch.length === 0) {
-        return true;
-      }
-
-      const haystack = [
-        serializeCellValue(row.id),
-        serializeCellValue(row.name),
-        serializeCellValue(row.city),
-        serializeCellValue(row.zip_code),
-        serializeCellValue(row.address),
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(normalizedToolbarSearch);
-    });
-  }, [activeView, databaseRows, normalizedToolbarSearch, toolbarDateRange]);
+  const filteredProjectRows = databaseRows;
 
   const databaseDraftCount = useMemo(
     () => Object.keys(databaseDrafts).length,
@@ -975,8 +1429,9 @@ export default function App() {
       });
 
       const payload = await readJson<CsvImportPreviewResponse>(response);
+      const nextMapping = mapping ? payload.mapping : autoMapAiSubcategoryPreview(payload.mapping);
       setPreview(payload);
-      setMappingDraft(payload.mapping);
+      setMappingDraft(nextMapping);
       setDerivedMappingDraft(payload.derivedMapping);
       setSuccess("Import preview created. Review the mapping and sample rows.");
       await loadImports();
@@ -1017,8 +1472,9 @@ export default function App() {
       });
 
       const payload = await readJson<CsvImportPreviewResponse>(response);
+      const nextMapping = mapping ? payload.mapping : autoMapAiSubcategoryPreview(payload.mapping);
       setPreview(payload);
-      setMappingDraft(payload.mapping);
+      setMappingDraft(nextMapping);
       setDerivedMappingDraft(payload.derivedMapping);
       setSuccess("PDF preview created. Review the mapping and sample rows.");
       await loadImports();
@@ -1110,7 +1566,7 @@ export default function App() {
   }
 
   async function previewProjectPrices(mapping?: ProjectPriceImportMapping[]) {
-    if (!selectedFile) {
+    if (!selectedProjectPriceFile) {
       setError("Select a CSV file first.");
       return;
     }
@@ -1125,7 +1581,7 @@ export default function App() {
     setSuccess(null);
 
     const formData = new FormData();
-    formData.append("file", selectedFile);
+    formData.append("file", selectedProjectPriceFile);
     formData.append("projectId", selectedProjectId);
     if (mapping) {
       formData.append("mapping", JSON.stringify(mapping));
@@ -1155,7 +1611,7 @@ export default function App() {
   }
 
   async function confirmProjectPrices() {
-    if (!selectedFile || !selectedProjectId || !projectPricePreview) {
+    if (!selectedProjectPriceFile || !selectedProjectId || !projectPricePreview) {
       return;
     }
 
@@ -1164,7 +1620,7 @@ export default function App() {
     setSuccess(null);
 
     const formData = new FormData();
-    formData.append("file", selectedFile);
+    formData.append("file", selectedProjectPriceFile);
     formData.append("projectId", selectedProjectId);
     formData.append("mapping", JSON.stringify(projectPriceMappingDraft));
 
@@ -1179,7 +1635,7 @@ export default function App() {
         `${payload.importedPrices} project-specific prices were imported for "${payload.project.name}".`
       );
       setProjectPricePreview(null);
-      setSelectedFile(null);
+      setSelectedProjectPriceFile(null);
     } catch (confirmError) {
       setError(
         confirmError instanceof Error
@@ -1917,7 +2373,7 @@ export default function App() {
                           <div>{column.label}</div>
                           {renderDatabaseColumnFilterMenu(column)}
                         </div>
-                        {!(activeView === "supplierData" || activeView === "database") ? (
+                        {!(activeView === "supplierData" || activeView === "database" || activeView === "projects") ? (
                           <span className="column-meta">
                             {column.type}
                             {column.editable ? " editable" : " read-only"}
@@ -1946,17 +2402,31 @@ export default function App() {
                                 isEditing || column.type === "boolean" ? (
                                   renderDatabaseEditor(column, rowId, value)
                                 ) : (
-                                  <div 
-                                    className="cell-readonly" 
+                                  <div
+                                    className={`cell-readonly ${activeView === "projects" ? "editable-affordance" : ""}`}
                                     onClick={() => setEditingDatabaseCell(`${rowId}-${column.name}`)}
                                     style={{
-                                      cursor: "pointer", 
+                                      cursor: "pointer",
                                       minHeight: "24px",
                                       borderBottom: hasDraft && column.name in rowDraft ? '1px dashed var(--primary-brand)' : '1px solid transparent'
                                     }}
                                     title="Click to edit"
                                   >
-                                    {serializeCellValue(value) || <span style={{color: "var(--text-tertiary)"}}>Empty</span>}
+                                    {(() => {
+                                      const actual = serializeCellValue(value);
+                                      if (actual) return actual;
+                                      const fallback = deriveDatabaseFallbackValue(column, row);
+                                      return (
+                                        <span className="cell-placeholder">
+                                          {fallback}
+                                          {activeView === "projects" ? (
+                                            <span className="edit-indicator" aria-hidden>
+                                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                                            </span>
+                                          ) : null}
+                                        </span>
+                                      );
+                                    })()}
                                   </div>
                                 )
                               ) : (
@@ -2056,22 +2526,16 @@ export default function App() {
       count: orders.length,
     },
     {
+      key: "spendAnalytics" as const,
+      label: "Spend Analytics",
+      description: "Project budgets and C-material spend",
+      count: projects.length,
+    },
+    {
       key: "catalog" as const,
       label: "Catalog",
       description: "Cleanup queue and bulk edits",
       count: catalogItems.length,
-    },
-    {
-      key: "supplierData" as const,
-      label: "Supplier Data",
-      description: "Supplier master data and discount control",
-      count: selectedDatabaseTable === "suppliers" ? databaseRowCount : (supplierCount ?? 0),
-    },
-    {
-      key: "database" as const,
-      label: "Database",
-      description: "Direct row editing in suppliers and products",
-      count: DATABASE_TABLES.length,
     },
   ];
 
@@ -2090,19 +2554,17 @@ export default function App() {
           {viewNavigation.map((item) => (
             <button
               key={item.key}
-              className={activeView === item.key ? "nav-button active" : "nav-button"}
+              className={`${activeView === item.key ? "nav-button active" : "nav-button"} ${
+                item.key === "orders" && unreadOrderCount > 0 && activeView !== "orders"
+                  ? "unread"
+                  : ""
+              }`}
               onClick={() => {
                 setActiveView(item.key);
                 if (item.key === "projects") {
                   void loadDatabaseRows("projects").catch((loadError) => {
                     setError(
                       loadError instanceof Error ? loadError.message : "Project data could not be loaded."
-                    );
-                  });
-                } else if (item.key === "supplierData") {
-                  void loadDatabaseRows("suppliers").catch((loadError) => {
-                    setError(
-                      loadError instanceof Error ? loadError.message : "Supplier data could not be loaded."
                     );
                   });
                 }
@@ -2116,6 +2578,9 @@ export default function App() {
                 {item.label}
               </span>
               <span className="nav-badge">{item.count}</span>
+              {item.key === "orders" && unreadOrderCount > 0 && activeView !== "orders" ? (
+                <span className="nav-new-label" aria-label={`${unreadOrderCount} unread orders`}>new</span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -2129,55 +2594,37 @@ export default function App() {
         </header>
 
         <div className="content-container">
+          {orderToastMessage ? (
+            <div className="floating-toast" role="status" aria-live="polite">
+              <span>{orderToastMessage}</span>
+              <button
+                type="button"
+                className="toast-close"
+                aria-label="Dismiss notification"
+                onClick={dismissOrderToast}
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+
           <header className="page-header">
             <h1 className="page-title">{headerCopy.tag}</h1>
             <p className="page-description">{headerCopy.title}</p>
           </header>
           
-          {["catalog", "orders", "supplierData"].includes(activeView) ? null : (
-            <div className="utility-toolbar">
-              <div className="search-input-wrapper">
-                <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input
-                  type="text"
-                  className="search-input"
-                  placeholder={activeView === "projects" ? "Search projects..." : "Search imports..."}
-                  value={toolbarSearchQuery}
-                  onChange={(event) => setToolbarSearchQuery(event.target.value)}
-                />
-              </div>
-              <select
-                className="filter-dropdown"
-                value={toolbarDateRange}
-                onChange={(event) => setToolbarDateRange(event.target.value as ToolbarDateRange)}
-              >
-                <option value="15d">Last 15 days</option>
-                <option value="1m">Last month</option>
-                <option value="6m">Last 6 months</option>
-              </select>
-              <select
-                className="filter-dropdown"
-                value={toolbarImportStatus}
-                onChange={(event) =>
-                  setToolbarImportStatus(event.target.value as ImportStatusFilter)
-                }
-                disabled={activeView !== "imports"}
-              >
-                <option value="all">All statuses</option>
-                <option value="draft">Draft</option>
-                <option value="confirmed">Confirmed</option>
-              </select>
+          {activeView === "imports" ? (
+            <div className="button-row" style={{ marginTop: 4 }}>
               <button
                 type="button"
                 className="button-secondary"
                 onClick={() => setShowImportHistory((s) => !s)}
                 aria-expanded={showImportHistory}
-                style={{ marginLeft: 8 }}
               >
-                {showImportHistory ? 'Hide history' : `History (${imports.length})`}
+                {showImportHistory ? "Hide history" : `History (${imports.length})`}
               </button>
             </div>
-          )}
+          ) : null}
 
           {/* Import history dropdown (hidden by default) */}
           {activeView === "imports" ? (
@@ -2188,10 +2635,10 @@ export default function App() {
                     <strong>Import history</strong>
                   </div>
                   <div style={{ display: 'grid', gap: 6, padding: 8 }}>
-                    {filteredImports.length === 0 ? (
+                    {imports.length === 0 ? (
                       <div style={{ color: 'var(--text-secondary)' }}>No recent imports</div>
                     ) : (
-                      filteredImports.map((imp) => (
+                      imports.map((imp) => (
                         <div key={imp.id} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                           <div style={{ flex: '1 1 220px' }}>
                             <div style={{ fontWeight: 600 }}>{imp.fileName}</div>
@@ -2212,7 +2659,7 @@ export default function App() {
             {error ? <p className="banner error">{error}</p> : null}
             {success ? <p className="banner success">{success}</p> : null}
 
-            {activeView === "imports" && filteredImports.length === 0 && !selectedFile && !selectedPdfFile ? (
+            {activeView === "imports" && imports.length === 0 && !selectedFile && !selectedPdfFile ? (
               <div className="empty-state-layout">
                 <div className="empty-state-title">
                   {imports.length === 0 ? "No imports yet" : "No matching imports"}
@@ -2220,7 +2667,7 @@ export default function App() {
                 <div className="empty-state-desc">
                   {imports.length === 0
                     ? "Start importing supplier data and CSV mapping to see them here."
-                    : "Adjust search, timeframe, or status filters to see existing imports."}
+                    : "Open the history to see existing imports."}
                 </div>
                 <button className="btn-primary">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -2232,6 +2679,7 @@ export default function App() {
             { /* moved import history to dropdown under toolbar */ }
 
             {activeView === "imports" ? (
+              <>
               <section className="content-grid">
                 <article className="panel upload-panel">
                   <div className="panel-header">
@@ -2319,12 +2767,22 @@ export default function App() {
               </div>
 
               {!preview ? (
-                <p className="empty-state">
-                  Upload a supplier CSV or PDF to inspect the field mapping and review all
-                  normalized rows before committing them.
-                </p>
+                isUploading ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div className="spinner" role="status" aria-label="Building preview"></div>
+                    <div style={{ color: 'var(--text-secondary)', marginTop: 8 }}>Building preview&hellip;</div>
+                  </div>
+                ) : (
+                  <p className="empty-state">
+                    Upload a supplier CSV or PDF to inspect the field mapping and review all
+                    normalized rows before committing them.
+                  </p>
+                )
               ) : (
                 <>
+                  {isUploading ? (
+                    <div className="preview-overlay"><div className="spinner" aria-hidden /></div>
+                  ) : null}
                   <div className="preview-stats">
                     <article>
                       <span>Rows</span>
@@ -2500,6 +2958,214 @@ export default function App() {
               )}
             </article>
           </section>
+
+          <section className="content-grid project-workspace-grid">
+            <div className="panel-stack">
+              <article className="panel upload-panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="panel-eyebrow">Project pricing</p>
+                    <h3>Import special prices</h3>
+                  </div>
+                </div>
+
+                <form
+                  className="upload-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void previewProjectPrices();
+                  }}
+                >
+                  <label className="field">
+                    <span>Existing project</span>
+                    <select
+                      value={selectedProjectId}
+                      onChange={(event) => setSelectedProjectId(event.target.value)}
+                    >
+                      <option value="">Select project</option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Special price CSV</span>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={(event) =>
+                        setSelectedProjectPriceFile(event.target.files?.[0] ?? null)
+                      }
+                    />
+                    <p className="field-help">
+                      Expected columns: `supplier_name`, `supplier_sku`, and `project_price`.
+                    </p>
+                  </label>
+
+                  <div className="button-row">
+                    <button type="submit" disabled={isProjectPriceUploading}>
+                      {isProjectPriceUploading ? "Matching prices..." : "Preview project prices"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      disabled={
+                        isProjectPriceUploading ||
+                        !selectedProjectPriceFile ||
+                        projectPriceMappingDraft.length === 0
+                      }
+                      onClick={() => void previewProjectPrices(projectPriceMappingDraft)}
+                    >
+                      Refresh preview
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      disabled={
+                        isProjectPriceConfirming ||
+                        !selectedProjectPriceFile ||
+                        !selectedProjectId ||
+                        !projectPricePreview
+                      }
+                      onClick={() => void confirmProjectPrices()}
+                    >
+                      {isProjectPriceConfirming ? "Importing..." : "Import project prices"}
+                    </button>
+                  </div>
+                </form>
+              </article>
+            </div>
+
+            <article className="panel preview-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Project price review</p>
+                  <h3>Review matched rows before writing project-specific prices</h3>
+                </div>
+              </div>
+
+              {!projectPricePreview ? (
+                <p className="empty-state">
+                  Select a project, upload a CSV with special prices, and preview the matched
+                  supplier SKUs before import.
+                </p>
+              ) : (
+                <>
+                  <div className="preview-stats">
+                    <article>
+                      <span>Rows</span>
+                      <strong>{projectPricePreview.totalRows}</strong>
+                    </article>
+                    <article>
+                      <span>Matched</span>
+                      <strong>{projectPricePreview.matchedRows}</strong>
+                    </article>
+                    <article>
+                      <span>Unmatched</span>
+                      <strong>{projectPricePreview.unmatchedRows}</strong>
+                    </article>
+                  </div>
+
+                  <div className="project-chip-row">
+                    <span className="database-chip">
+                      Import target: {projectPricePreview.project.name}
+                    </span>
+                    {formatProjectLocation(projectPricePreview.project) && (
+                      <span className="database-chip">
+                        Location: {formatProjectLocation(projectPricePreview.project)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="table-shell" style={{ overflowX: "auto" }}>
+                    <table style={{ whiteSpace: "nowrap", minWidth: "100%" }}>
+                      <thead>
+                        <tr>
+                          {projectPriceMappingDraft.map((entry) => (
+                            <th key={entry.sourceColumn} style={{ minWidth: "180px", padding: "12px" }}>
+                              <div className="mapping-header">{entry.sourceColumn}</div>
+                              <select
+                                value={entry.target}
+                                style={{ width: "100%" }}
+                                onChange={(event) =>
+                                  setProjectPriceMappingDraft((current) =>
+                                    current.map((mappingEntry) =>
+                                      mappingEntry.sourceColumn === entry.sourceColumn
+                                        ? {
+                                            ...mappingEntry,
+                                            target:
+                                              event.target.value as
+                                                | ProjectPriceImportFieldTarget
+                                                | "ignore",
+                                          }
+                                        : mappingEntry
+                                    )
+                                  )
+                                }
+                              >
+                                <option value="ignore">Ignore</option>
+                                {PROJECT_PRICE_IMPORT_TARGETS.map((target) => (
+                                  <option key={target} value={target}>
+                                    {PROJECT_PRICE_TARGET_LABELS[target]}
+                                  </option>
+                                ))}
+                              </select>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {projectPricePreview.sampleRows.map((row, index) => (
+                          <tr key={`sample-${index}`}>
+                            {projectPriceMappingDraft.map((entry) => (
+                              <td key={entry.sourceColumn}>
+                                {row[entry.sourceColumn] || (
+                                  <span style={{ color: "#d1d5db" }}>---</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="table-shell">
+                    <table className="catalog-table">
+                      <thead>
+                        <tr>
+                          <th>Row</th>
+                          <th>Supplier</th>
+                          <th>Supplier SKU</th>
+                          <th>Product</th>
+                          <th>Contract</th>
+                          <th>Project Price</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {projectPricePreview.rows.map((row) => (
+                          <tr key={`${row.rowNumber}-${row.supplierSku}-${row.supplierName}`}>
+                            <td>{row.rowNumber}</td>
+                            <td>{row.supplierName || "---"}</td>
+                            <td>{row.supplierSku || "---"}</td>
+                            <td>{row.productName || "---"}</td>
+                            <td>{row.currentContractPrice != null ? EUR_FORMATTER.format(row.currentContractPrice) : "---"}</td>
+                            <td>{row.projectPrice ?? "---"}</td>
+                            <td>{row.status === "matched" ? "matched" : row.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </article>
+          </section>
+          </>
         ) : activeView === "projects" ? (
           <>
             <section className="content-grid">
@@ -2531,7 +3197,7 @@ export default function App() {
                   <p className="empty-state">
                     {databaseRows.length === 0
                       ? "No projects found yet."
-                      : "No projects match the current search and timeframe filters."}
+                      : "No projects available for this view."}
                   </p>
                 ) : (
                   <div className="table-shell">
@@ -2541,12 +3207,6 @@ export default function App() {
                           {visibleDatabaseColumns.map((column) => (
                             <th key={column.name} className="database-header-cell">
                               <div>{column.label}</div>
-                              {!(activeView === "supplierData" || activeView === "database") ? (
-                                <span className="column-meta">
-                                  {column.type}
-                                  {column.editable ? " editable" : " read-only"}
-                                </span>
-                              ) : null}
                             </th>
                           ))}
                         </tr>
@@ -2570,7 +3230,7 @@ export default function App() {
                                         renderDatabaseEditor(column, rowId, value)
                                       ) : (
                                         <div
-                                          className="cell-readonly"
+                                          className={`cell-readonly ${activeView === "projects" ? "editable-affordance" : ""}`}
                                           onClick={() =>
                                             setEditingDatabaseCell(`${rowId}-${column.name}`)
                                           }
@@ -2583,11 +3243,19 @@ export default function App() {
                                           }}
                                           title="Click to edit"
                                         >
-                                          {serializeCellValue(value) || (
-                                            <span style={{ color: "var(--text-tertiary)" }}>
-                                              Empty
-                                            </span>
-                                          )}
+                                          {(() => {
+                                            const actual = serializeCellValue(value);
+                                            if (actual) return actual;
+                                            const fallback = deriveDatabaseFallbackValue(column, row);
+                                            return (
+                                              <span className="cell-placeholder">
+                                                {fallback}
+                                                <span className="edit-indicator" aria-hidden>
+                                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                                                </span>
+                                              </span>
+                                            );
+                                          })()}
                                         </div>
                                       )
                                     ) : (
@@ -2671,219 +3339,7 @@ export default function App() {
                   </form>
                 </article>
 
-                <article className="panel upload-panel">
-                  <div className="panel-header">
-                    <div>
-                      <p className="panel-eyebrow">Project pricing</p>
-                      <h3>Import special prices</h3>
-                    </div>
-                  </div>
-
-                  <form
-                    className="upload-form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void previewProjectPrices();
-                    }}
-                  >
-                    <label className="field">
-                      <span>Existing project</span>
-                      <select
-                        value={selectedProjectId}
-                        onChange={(event) => setSelectedProjectId(event.target.value)}
-                      >
-                        <option value="">Select project</option>
-                        {filteredProjects.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {project.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="field">
-                      <span>Special price CSV</span>
-                      <input
-                        type="file"
-                        accept=".csv,text/csv"
-                        onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                      />
-                      <p className="field-help">
-                        Expected columns: `supplier_name`, `supplier_sku`, and `project_price`.
-                      </p>
-                    </label>
-
-                    <div className="project-chip-row">
-                      <span className="database-chip">
-                        Project: {selectedProject?.name ?? "none selected"}
-                      </span>
-                      {selectedProjectLocation && (
-                        <span className="database-chip">Location: {selectedProjectLocation}</span>
-                      )}
-                      <span className="database-chip">
-                        Approval flow: project manager review required
-                      </span>
-                    </div>
-
-                    <div className="button-row">
-                      <button type="submit" disabled={isProjectPriceUploading}>
-                        {isProjectPriceUploading ? "Matching prices..." : "Preview project prices"}
-                      </button>
-                      <button
-                        type="button"
-                        className="button-secondary"
-                        disabled={
-                          isProjectPriceUploading ||
-                          !selectedFile ||
-                          projectPriceMappingDraft.length === 0
-                        }
-                        onClick={() => void previewProjectPrices(projectPriceMappingDraft)}
-                      >
-                        Refresh preview
-                      </button>
-                      <button
-                        type="button"
-                        className="button-secondary"
-                        disabled={
-                          isProjectPriceConfirming ||
-                          !selectedFile ||
-                          !selectedProjectId ||
-                          !projectPricePreview
-                        }
-                        onClick={() => void confirmProjectPrices()}
-                      >
-                        {isProjectPriceConfirming ? "Importing..." : "Import project prices"}
-                      </button>
-                    </div>
-                  </form>
-                </article>
               </div>
-
-              <article className="panel preview-panel">
-                <div className="panel-header">
-                  <div>
-                    <p className="panel-eyebrow">Project price review</p>
-                    <h3>Review matched rows before writing project-specific prices</h3>
-                  </div>
-                </div>
-
-                {!projectPricePreview ? (
-                  <p className="empty-state">
-                    Select a project, upload a CSV with special prices, and preview the matched
-                    supplier SKUs before import.
-                  </p>
-                ) : (
-                  <>
-                    <div className="preview-stats">
-                      <article>
-                        <span>Rows</span>
-                        <strong>{projectPricePreview.totalRows}</strong>
-                      </article>
-                      <article>
-                        <span>Matched</span>
-                        <strong>{projectPricePreview.matchedRows}</strong>
-                      </article>
-                      <article>
-                        <span>Unmatched</span>
-                        <strong>{projectPricePreview.unmatchedRows}</strong>
-                      </article>
-                    </div>
-
-                    <div className="project-chip-row">
-                      <span className="database-chip">
-                        Import target: {projectPricePreview.project.name}
-                      </span>
-                      {formatProjectLocation(projectPricePreview.project) && (
-                        <span className="database-chip">
-                          Location: {formatProjectLocation(projectPricePreview.project)}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="table-shell" style={{ overflowX: "auto" }}>
-                      <table style={{ whiteSpace: "nowrap", minWidth: "100%" }}>
-                        <thead>
-                          <tr>
-                            {projectPriceMappingDraft.map((entry) => (
-                              <th key={entry.sourceColumn} style={{ minWidth: "180px", padding: "12px" }}>
-                                <div className="mapping-header">{entry.sourceColumn}</div>
-                                <select
-                                  value={entry.target}
-                                  style={{ width: "100%" }}
-                                  onChange={(event) =>
-                                    setProjectPriceMappingDraft((current) =>
-                                      current.map((mappingEntry) =>
-                                        mappingEntry.sourceColumn === entry.sourceColumn
-                                          ? {
-                                              ...mappingEntry,
-                                              target:
-                                                event.target.value as
-                                                  | ProjectPriceImportFieldTarget
-                                                  | "ignore",
-                                            }
-                                          : mappingEntry
-                                      )
-                                    )
-                                  }
-                                >
-                                  <option value="ignore">Ignore</option>
-                                  {PROJECT_PRICE_IMPORT_TARGETS.map((target) => (
-                                    <option key={target} value={target}>
-                                      {PROJECT_PRICE_TARGET_LABELS[target]}
-                                    </option>
-                                  ))}
-                                </select>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {projectPricePreview.sampleRows.map((row, index) => (
-                            <tr key={`sample-${index}`}>
-                              {projectPriceMappingDraft.map((entry) => (
-                                <td key={entry.sourceColumn}>
-                                  {row[entry.sourceColumn] || (
-                                    <span style={{ color: "#d1d5db" }}>---</span>
-                                  )}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="table-shell">
-                      <table className="catalog-table">
-                        <thead>
-                          <tr>
-                            <th>Row</th>
-                            <th>Supplier</th>
-                            <th>Supplier SKU</th>
-                            <th>Product</th>
-                            <th>Contract</th>
-                            <th>Project Price</th>
-                            <th>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {projectPricePreview.rows.map((row) => (
-                            <tr key={`${row.rowNumber}-${row.supplierSku}-${row.supplierName}`}>
-                              <td>{row.rowNumber}</td>
-                              <td>{row.supplierName || "---"}</td>
-                              <td>{row.supplierSku || "---"}</td>
-                              <td>{row.productName || "---"}</td>
-                              <td>{row.currentContractPrice ?? "---"}</td>
-                              <td>{row.projectPrice ?? "---"}</td>
-                              <td>{row.status === "matched" ? "matched" : row.reason}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )}
-              </article>
             </section>
           </>
         ) : activeView === "orders" ? (
@@ -2993,22 +3449,40 @@ export default function App() {
                 </p>
               ) : (
                 <div className="order-list">
-                  {filteredOrders.map((order) => (
+                  {(
+                    // Extra safety: ensure rendered orders exactly match the active status filter
+                    filteredOrders.filter((o) =>
+                      orderStatusFilter === "all" ? true : o.status === orderStatusFilter
+                    )
+                  ).map((order) => (
                     <article
                       className={`order-card ${
                         order.status === "pending_approval" ? "approval-needed" : ""
                       }`}
                       key={order.id}
                     >
+                      {(() => {
+                        const dateLabel =
+                          order.status === "pending_approval" || order.status === "rejected"
+                            ? "Requested"
+                            : order.status === "ordered" || order.status === "delivered"
+                              ? "Ordered"
+                              : "Created";
+                        const dateValue =
+                          order.status === "pending_approval" || order.status === "rejected"
+                            ? order.submittedAt ?? order.createdAt
+                            : order.status === "ordered" || order.status === "delivered"
+                              ? order.orderedAt ?? order.createdAt
+                              : order.createdAt;
+
+                        return (
+                          <>
                       <div className="order-card-header">
                         <div>
                           <strong>{order.projectName}</strong>
                           <p>{order.foremanName}</p>
                         </div>
                         <div className="order-card-statuses">
-                          {order.status === "pending_approval" ? (
-                            <span className="order-attention-badge">Approval needed</span>
-                          ) : null}
                           <span className={`status-pill ${order.status.replace("_", "-")}`}>
                             {ORDER_STATUS_LABELS[order.status]}
                           </span>
@@ -3016,7 +3490,19 @@ export default function App() {
                       </div>
 
                       <div className="order-card-meta">
-                        <span>Order sum: {order.totalAmount.toFixed(2)} {order.currency}</span>
+                        <span className="order-meta-highlight">
+                          Order sum: {EUR_FORMATTER.format(order.totalAmount ?? 0)}
+                        </span>
+                        <span className="order-meta-highlight">
+                          {dateLabel}:{" "}
+                          {new Date(dateValue).toLocaleString("de-DE", {
+                            year: "numeric",
+                            month: "2-digit",
+                            day: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
                         <span>Route: {APPROVAL_ROUTE_LABELS[order.approvalRoute]}</span>
                         <span>{order.items.length} items</span>
                       </div>
@@ -3036,7 +3522,7 @@ export default function App() {
                               <div className="order-item-row" key={item.id}>
                                 <span>{item.displayName}</span>
                                 <span>
-                                  {item.quantity} x {item.unitPrice.toFixed(2)} CHF = {item.lineTotal.toFixed(2)} CHF
+                                  {item.quantity} x {EUR_FORMATTER.format(item.unitPrice ?? 0)} = {EUR_FORMATTER.format(item.lineTotal ?? 0)}
                                 </span>
                               </div>
                             ))}
@@ -3110,10 +3596,398 @@ export default function App() {
                           </div>
                         </div>
                       ) : null}
+                          </>
+                        );
+                      })()}
                     </article>
                   ))}
                 </div>
               )}
+            </article>
+          </section>
+        ) : activeView === "spendAnalytics" ? (
+          <section className="content-grid">
+            <article className="panel database-panel full-width-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Spend Analytics</p>
+                  <h3>Project C-material spend vs. budget</h3>
+                  <p className="subline">
+                    Budget basis uses project daily budget multiplied by project runtime days.
+                  </p>
+                </div>
+                <div style={{ marginLeft: "auto" }}>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => {
+                      setSelectedAnalyticsProjectIds(analyticsData.map((p) => p.projectId));
+                    }}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => setSelectedAnalyticsProjectIds([])}
+                    style={{ marginLeft: 8 }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ padding: 12 }}>
+                <div className="analytics-controls">
+                  {projects.map((proj) => (
+                    <label key={proj.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedAnalyticsProjectIds.includes(proj.id)}
+                        onChange={(e) => {
+                          setSelectedAnalyticsProjectIds((current) => {
+                            if (e.target.checked) return Array.from(new Set([...current, proj.id]));
+                            return current.filter((id) => id !== proj.id);
+                          });
+                        }}
+                      />
+                      <span>{proj.name}</span>
+                    </label>
+                  ))}
+                  <div style={{ marginLeft: "auto", color: "var(--text-secondary)" }}>
+                    {isAnalyticsLoading ? "Loading analytics..." : `${analyticsData.length} projects`}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  {selectedAnalyticsProjectIds.length === 0 ? (
+                    <p className="empty-state">No projects selected. Choose projects to display analytics.</p>
+                  ) : (
+                    <div>
+                      <div>
+                        {portfolioSortedProjects.map((p) => {
+                            const budgetBase = p.budgetTotal > 0 ? p.budgetTotal : 1;
+                            const usedPercent = Math.max(0, (p.actualSpend / budgetBase) * 100);
+                            const isExceeded = usedPercent > 100;
+                            const BAR_SCALE_MAX_PERCENT = 150;
+                            const displayPercent = Math.min(
+                              100,
+                              (Math.min(BAR_SCALE_MAX_PERCENT, usedPercent) / BAR_SCALE_MAX_PERCENT) * 100
+                            );
+                            const variance = p.actualSpend - p.budgetTotal;
+
+                            return (
+                              <div key={p.projectId} className="analytics-row">
+                                <div className="analytics-row-label">{p.projectName}</div>
+                                <div className={`analytics-bars ${isExceeded ? "exceeded" : ""}`} aria-hidden>
+                                  <div className="analytics-bar-budget" style={{ width: "100%" }} />
+                                  <div
+                                    className={`analytics-bar-actual ${isExceeded ? "over" : "ok"}`}
+                                    style={{ width: `${displayPercent}%` }}
+                                  />
+                                  {isExceeded ? <div className="analytics-budget-marker" /> : null}
+                                </div>
+                                <div className="analytics-values">
+                                  <div className="analytics-value-line">
+                                    <span>Budget: {EUR_FORMATTER.format(p.budgetTotal)}</span>
+                                  </div>
+                                  <div className="analytics-value-line">
+                                    <span>
+                                      Spend: {EUR_FORMATTER.format(p.actualSpend)} ({Math.round(usedPercent)}%)
+                                    </span>
+                                    <span
+                                      className={`status-pill analytics-inline-status ${
+                                        isExceeded ? "rejected" : "ordered"
+                                      }`}
+                                    >
+                                      {isExceeded ? "Exceeded" : "On Track"}
+                                    </span>
+                                  </div>
+                                  <div className="analytics-value-line">
+                                    <span>
+                                      Variance: {variance >= 0 ? "+" : ""}
+                                      {EUR_FORMATTER.format(variance)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </article>
+
+            <article className="panel database-panel full-width-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Spend Drilldown</p>
+                  <h3>Project-first drilldown for spend explanation</h3>
+                </div>
+              </div>
+
+              <div className="analytics-detail-controls" style={{ padding: 12 }}>
+                <label className="field compact">
+                  <span>Scope</span>
+                  <label className="checkbox" style={{ marginTop: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={analyticsSplitByProject}
+                      onChange={(event) => setAnalyticsSplitByProject(event.target.checked)}
+                    />
+                    <span>
+                      {analyticsSplitByProject
+                        ? "Split by project"
+                        : "All selected projects combined"}
+                    </span>
+                  </label>
+                </label>
+
+                <label className="field compact">
+                  <span>Sort by</span>
+                  <select
+                    value={analyticsSortBy}
+                    onChange={(event) =>
+                      setAnalyticsSortBy(
+                        event.target.value as
+                          | "attention"
+                          | "spend_desc"
+                          | "spend_asc"
+                          | "newest"
+                          | "oldest"
+                      )
+                    }
+                  >
+                    <option value="attention">Attention first</option>
+                    <option value="spend_desc">Highest spend first</option>
+                    <option value="spend_asc">Lowest spend first</option>
+                    <option value="newest">Newest orders first</option>
+                    <option value="oldest">Oldest orders first</option>
+                  </select>
+                </label>
+
+                <label className="field compact">
+                  <span>Category</span>
+                  <select
+                    value={analyticsCategoryFilter}
+                    onChange={(event) => setAnalyticsCategoryFilter(event.target.value)}
+                  >
+                    <option value="all">All categories</option>
+                    {analyticsCategoryOptions.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field compact">
+                  <span>Supplier</span>
+                  <select
+                    value={analyticsSupplierFilter}
+                    onChange={(event) => setAnalyticsSupplierFilter(event.target.value)}
+                  >
+                    <option value="all">All suppliers</option>
+                    {analyticsSupplierOptions.map((supplier) => (
+                      <option key={supplier} value={supplier}>
+                        {supplier}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field compact">
+                  <span>Time period</span>
+                  <select
+                    value={analyticsTimeFilter}
+                    onChange={(event) =>
+                      setAnalyticsTimeFilter(event.target.value as "all" | "30d" | "90d")
+                    }
+                  >
+                    <option value="all">All time</option>
+                    <option value="30d">Last 30 days</option>
+                    <option value="90d">Last 90 days</option>
+                  </select>
+                </label>
+
+                <label className="field compact analytics-search-field">
+                  <span>Search details</span>
+                  <input
+                    type="text"
+                    value={analyticsSearchQuery}
+                    onChange={(event) => setAnalyticsSearchQuery(event.target.value)}
+                    placeholder="Search order ID, item, category, project..."
+                  />
+                </label>
+              </div>
+
+              <div style={{ padding: "0 12px 12px" }}>
+                {selectedAnalyticsProjectIds.length === 0 ? (
+                  <p className="empty-state">Select at least one project to explore spend details.</p>
+                ) : analyticsSplitByProject ? (
+                  analyticsProjectOrderGroups.every((group) => group.orders.length === 0) ? (
+                    <p className="empty-state">No spend details match the current filters.</p>
+                  ) : (
+                    <div className="analytics-group-list">
+                      {analyticsProjectOrderGroups
+                        .map((projectGroup) => {
+                          if (projectGroup.orders.length > 0) return projectGroup;
+                          const rebuilt = buildAnalyticsRows(
+                            filteredAnalyticsDetails.filter((e) => e.projectId === projectGroup.project.projectId),
+                            "order"
+                          ).map((row) => ({ ...row, status: row.entries[0]?.orderStatus ?? "draft" }));
+
+                          return { ...projectGroup, orders: rebuilt };
+                        })
+                        .filter((group) => group.orders.length > 0)
+                        .map((projectGroup) => (
+                          <details key={projectGroup.project.projectId} className="analytics-project-group">
+                            <summary className="analytics-project-heading">
+                              <strong>{projectGroup.project.projectName}</strong>
+                              <span>
+                                Budget {EUR_FORMATTER.format(projectGroup.project.budgetTotal)} / Spend {" "}
+                                {EUR_FORMATTER.format(projectGroup.project.actualSpend)}
+                              </span>
+                            </summary>
+
+                            <div>
+                              {projectGroup.orders.map((group) => (
+                                <details
+                                  key={`${projectGroup.project.projectId}-${group.key}`}
+                                  className={`analytics-group-card ${
+                                    group.total >= projectGroup.project.actualSpend * 0.35 ? "urgent" : ""
+                                  }`}
+                                >
+                                  <summary>
+                                    <span className="analytics-group-title">
+                                      Order {group.key.slice(0, 8)}
+                                      <span className="subline">{ORDER_STATUS_LABELS[group.status]}</span>
+                                    </span>
+                                    <span className="analytics-group-meta">
+                                      <strong>{EUR_FORMATTER.format(group.total)}</strong>
+                                      <span>{group.entries.length} items</span>
+                                    </span>
+                                  </summary>
+
+                                  <div className="table-shell">
+                                    <table className="catalog-table analytics-detail-table">
+                                      <thead>
+                                        <tr>
+                                          <th>When</th>
+                                          <th>Order</th>
+                                          <th>Supplier</th>
+                                          <th>Category</th>
+                                          <th>Item</th>
+                                          <th>Qty</th>
+                                          <th>Unit Price</th>
+                                          <th>Line Total</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {group.entries
+                                          .slice()
+                                          .sort((a, b) => b.lineTotal - a.lineTotal)
+                                          .map((entry) => (
+                                            <tr key={entry.itemId}>
+                                              <td>{new Date(entry.orderedAt).toLocaleDateString("de-DE")}</td>
+                                              <td>
+                                                {entry.orderId.slice(0, 8)}
+                                                <span className="subline">{ORDER_STATUS_LABELS[entry.orderStatus]}</span>
+                                              </td>
+                                              <td>{entry.supplierName}</td>
+                                              <td>
+                                                {entry.category}
+                                                <span className="subline">{entry.subcategory || "n/a"}</span>
+                                              </td>
+                                              <td>{entry.itemName}</td>
+                                              <td>{entry.quantity}</td>
+                                              <td>{EUR_FORMATTER.format(entry.unitPrice)}</td>
+                                              <td>{EUR_FORMATTER.format(entry.lineTotal)}</td>
+                                            </tr>
+                                          ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </details>
+                              ))}
+                            </div>
+                          </details>
+                        ))}
+                    </div>
+                  )
+                ) : analyticsPortfolioRows.length === 0 ? (
+                  <p className="empty-state">No spend details match the current filters.</p>
+                ) : (
+                  <div className="analytics-group-list">
+                    {analyticsPortfolioRows.map((group) => {
+                      const portfolioTotal = Math.max(
+                        1,
+                        filteredAnalyticsDetails.reduce((sum, entry) => sum + entry.lineTotal, 0)
+                      );
+                      return (
+                        <details
+                          key={group.key}
+                          className={`analytics-group-card ${
+                            group.total >= portfolioTotal * 0.35 ? "urgent" : ""
+                          }`}
+                        >
+                          <summary>
+                            <span className="analytics-group-title">{group.label}</span>
+                            <span className="analytics-group-meta">
+                              <strong>{EUR_FORMATTER.format(group.total)}</strong>
+                              <span>{group.entries.length} items</span>
+                            </span>
+                          </summary>
+
+                          <div className="table-shell">
+                            <table className="catalog-table analytics-detail-table">
+                              <thead>
+                                <tr>
+                                  <th>Project</th>
+                                  <th>When</th>
+                                  <th>Order</th>
+                                  <th>Supplier</th>
+                                  <th>Category</th>
+                                  <th>Item</th>
+                                  <th>Qty</th>
+                                  <th>Unit Price</th>
+                                  <th>Line Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {group.entries
+                                  .slice()
+                                  .sort((a, b) => b.lineTotal - a.lineTotal)
+                                  .map((entry) => (
+                                    <tr key={entry.itemId}>
+                                      <td>{entry.projectName}</td>
+                                      <td>{new Date(entry.orderedAt).toLocaleDateString("de-DE")}</td>
+                                      <td>
+                                        {entry.orderId.slice(0, 8)}
+                                        <span className="subline">{ORDER_STATUS_LABELS[entry.orderStatus]}</span>
+                                      </td>
+                                      <td>{entry.supplierName}</td>
+                                      <td>
+                                        {entry.category}
+                                        <span className="subline">{entry.subcategory || "n/a"}</span>
+                                      </td>
+                                      <td>{entry.itemName}</td>
+                                      <td>{entry.quantity}</td>
+                                      <td>{EUR_FORMATTER.format(entry.unitPrice)}</td>
+                                      <td>{EUR_FORMATTER.format(entry.lineTotal)}</td>
+                                    </tr>
+                                  ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </article>
           </section>
         ) : activeView === "catalog" ? (
@@ -3127,6 +4001,16 @@ export default function App() {
               </div>
 
               <div className="filters catalog-filters">
+                <label className="field compact catalog-search-field">
+                  <span>Search catalog</span>
+                  <input
+                    type="text"
+                    value={catalogSearchQuery}
+                    onChange={(event) => setCatalogSearchQuery(event.target.value)}
+                    placeholder="Type words like supplier, SKU, family, category..."
+                  />
+                </label>
+
                 <label className="field compact">
                   <span>Supplier</span>
                   <select
@@ -3212,7 +4096,7 @@ export default function App() {
                 </p>
               ) : filteredCatalogItems.length === 0 ? (
                 <p className="empty-state">
-                  No catalog rows match the current supplier, category, and subcategory filters.
+                  No catalog rows match the current search and selected filters.
                 </p>
               ) : (
                 <div className="table-shell">
@@ -3234,8 +4118,10 @@ export default function App() {
                         return (
                           <tr key={item.id}>
                             <td>
-                              <strong>{item.supplierName}</strong>
-                              <span className="subline">{item.supplierSku}</span>
+                              <strong>{renderHighlightedText(item.supplierName, catalogSearchTerms)}</strong>
+                              <span className="subline">
+                                {renderHighlightedText(item.supplierSku, catalogSearchTerms)}
+                              </span>
                             </td>
                             <td>
                               <input
@@ -3244,7 +4130,11 @@ export default function App() {
                                   updateDraftValue(item.id, "displayName", event.target.value)
                                 }
                               />
-                              <span className="subline">Source: {item.sourceName}</span>
+                              {catalogSearchTerms.length > 0 ? (
+                                <span className="subline">
+                                  {renderHighlightedText(row.displayName, catalogSearchTerms)}
+                                </span>
+                              ) : null}
                             </td>
                             <td>
                               <select
@@ -3264,9 +4154,8 @@ export default function App() {
                                 ))}
                               </select>
                               <span className="subline">
-                                Subcategory: {item.subcategory || "n/a"}
+                                Subcategory: {renderHighlightedText(item.subcategory || "n/a", catalogSearchTerms)}
                               </span>
-                              <span className="subline">Source: {item.sourceCategory || "n/a"}</span>
                             </td>
                             <td>
                               <input
@@ -3282,16 +4171,26 @@ export default function App() {
                                   )
                                 }
                               />
-                              <span className="subline">{item.unit}</span>
+                              <span className="subline">
+                                {renderHighlightedText(item.unit, catalogSearchTerms)}
+                              </span>
                             </td>
                             <td>
                               <div className="subline">C-material: {row.isCMaterial ? "Yes" : "No"}</div>
                             </td>
                             <td>
-                              <span className="subline">Use: {item.consumptionType || "n/a"}</span>
-                              <span className="subline">Site: {item.typicalSite || "n/a"}</span>
-                              <span className="subline">Family: {item.familyName || "n/a"}</span>
-                              <span className="subline">Variant: {item.variantLabel || "standard"}</span>
+                              <span className="subline">
+                                Use: {renderHighlightedText(item.consumptionType || "n/a", catalogSearchTerms)}
+                              </span>
+                              <span className="subline">
+                                Site: {renderHighlightedText(item.typicalSite || "n/a", catalogSearchTerms)}
+                              </span>
+                              <span className="subline">
+                                Family: {renderHighlightedText(item.familyName || "n/a", catalogSearchTerms)}
+                              </span>
+                              <span className="subline">
+                                Variant: {renderHighlightedText(item.variantLabel || "standard", catalogSearchTerms)}
+                              </span>
                               <span className="subline">
                                 Hazardous: {item.hazardous ? "Yes" : "No"}
                               </span>

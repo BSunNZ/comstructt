@@ -71,6 +71,39 @@ export class ApiError extends Error {
   }
 }
 
+export interface SpendAnalyticsEntry {
+  projectId: string;
+  projectName: string;
+  budgetDaily: number;
+  projectStart: string;
+  budgetTotal: number;
+  actualSpend: number;
+  remaining: number;
+  percentUsed: number;
+  status: "On Track" | "Over Budget";
+}
+
+export interface SpendAnalyticsDetailEntry {
+  itemId: string;
+  projectId: string;
+  projectName: string;
+  orderId: string;
+  orderStatus: "draft" | "pending_approval" | "ordered" | "delivered" | "rejected";
+  orderedAt: string;
+  supplierName: string;
+  category: string;
+  subcategory: string | null;
+  itemName: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface SpendAnalyticsPayload {
+  projects: SpendAnalyticsEntry[];
+  details: SpendAnalyticsDetailEntry[];
+}
+
 interface DbImport {
   id: string;
   supplier_id: string | null;
@@ -168,6 +201,7 @@ interface DbProject {
   city: string | null;
   zip_code: string | null;
   address: string | null;
+  budget_daily: number | null;
   min_approval: number | null;
   created_at: string;
 }
@@ -334,6 +368,13 @@ const DATABASE_SCHEMAS: Record<DatabaseTableName, DatabaseTableDefinition> = {
       { name: "city", label: "City", type: "string", nullable: true, editable: true },
       { name: "zip_code", label: "ZIP Code", type: "string", nullable: true, editable: true },
       { name: "address", label: "Address", type: "string", nullable: true, editable: true },
+      {
+        name: "budget_daily",
+        label: "Budget",
+        type: "number",
+        nullable: true,
+        editable: true,
+      },
       {
         name: "min_approval",
         label: "Min Approval",
@@ -1946,6 +1987,134 @@ export async function listProcurementOrders(): Promise<ProcurementOrdersResponse
         settings
       )
     ),
+  };
+}
+
+export async function getSpendAnalytics(projectIds?: string[]): Promise<SpendAnalyticsPayload> {
+  const projects = projectIds && projectIds.length > 0
+    ? await run<DbProject[]>(db.from("projects").select("*").in("id", projectIds))
+    : await run<DbProject[]>(db.from("projects").select("*"));
+
+  const projectIdsToQuery = projects.map((p) => p.id);
+
+  // Fetch orders for these projects with allowed statuses
+  const statuses = ["ordered", "delivered", "approved"];
+  const orders = projectIdsToQuery.length > 0
+    ? await run<DbOrder[]>(db.from("orders").select("*").in("project_id", projectIdsToQuery).in("status", statuses))
+    : [];
+
+  const orderIds = orders.map((o) => o.id);
+
+  const items = orderIds.length > 0
+    ? await run<DbOrderItem[]>(db.from("order_items").select("*").in("order_id", orderIds))
+    : [];
+
+  const productIds = Array.from(new Set(items.map((i) => i.product_id).filter((v): v is string => Boolean(v))));
+  const products = productIds.length > 0
+    ? await run<DbNormalizedProduct[]>(db.from("normalized_products").select("*").in("id", productIds))
+    : [];
+  const mappings = productIds.length > 0
+    ? await run<DbSupplierProductMapping[]>(
+        db.from("supplier_product_mapping").select("*").in("product_id", productIds)
+      )
+    : [];
+  const supplierIds = Array.from(new Set(mappings.map((mapping) => mapping.supplier_id)));
+  const suppliers = supplierIds.length > 0
+    ? await run<DbSupplier[]>(db.from("suppliers").select("*").in("id", supplierIds))
+    : [];
+  const productsById = new Map(products.map((p) => [p.id, p]));
+  const suppliersById = new Map(suppliers.map((supplier) => [supplier.id, supplier]));
+  const supplierByProductId = new Map<string, string>();
+  for (const mapping of mappings) {
+    if (supplierByProductId.has(mapping.product_id)) {
+      continue;
+    }
+    const supplier = suppliersById.get(mapping.supplier_id);
+    if (supplier?.name) {
+      supplierByProductId.set(mapping.product_id, supplier.name);
+    }
+  }
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+
+  const ordersById = new Map(orders.map((o) => [o.id, o]));
+
+  // Sum per project, only C-material items and items that have matching product marked as C-material
+  const spendByProject = new Map<string, number>();
+  const seenItemIds = new Set<string>();
+  const detailEntries: SpendAnalyticsDetailEntry[] = [];
+
+  for (const item of items) {
+    if (!item.id) continue;
+    if (seenItemIds.has(item.id)) continue; // dedupe by unique item id
+    seenItemIds.add(item.id);
+
+    const order = ordersById.get(item.order_id);
+    if (!order || !order.project_id) continue;
+
+    const product = item.product_id ? productsById.get(item.product_id as string) : undefined;
+    if (!product || !product.is_c_material) continue; // only C-material
+
+    const unitPrice = typeof (item as any).unit_price === "number" ? (item as any).unit_price : Number((item as any).unit_price ?? 0);
+    const quantity = typeof (item as any).quantity === "number" ? (item as any).quantity : Number((item as any).quantity ?? 0);
+    if (!Number.isFinite(unitPrice) || !Number.isFinite(quantity)) continue;
+
+    const lineTotal = unitPrice * quantity;
+    spendByProject.set(order.project_id, (spendByProject.get(order.project_id) ?? 0) + lineTotal);
+
+    const project = projectsById.get(order.project_id);
+    detailEntries.push({
+      itemId: item.id,
+      projectId: order.project_id,
+      projectName: project?.name ?? "Unknown project",
+      orderId: order.id,
+      orderStatus: normalizeOrderStatus(order.status),
+      orderedAt: order.created_at,
+      supplierName: item.product_id ? supplierByProductId.get(item.product_id) ?? "Unknown supplier" : "Unknown supplier",
+      category: product.category,
+      subcategory: product.subcategory,
+      itemName: product.product_name,
+      quantity,
+      unitPrice,
+      lineTotal,
+    });
+  }
+
+  const now = Date.now();
+  const result: SpendAnalyticsEntry[] = projects.map((project) => {
+    const budgetDaily = Number(project.budget_daily ?? 100);
+    const createdAt = project.created_at;
+    let days = 30;
+    try {
+      const parsed = Date.parse(createdAt);
+      if (Number.isFinite(parsed)) {
+        days = Math.max(1, Math.floor((now - parsed) / (1000 * 60 * 60 * 24)));
+      }
+    } catch {}
+
+    const budgetTotal = budgetDaily * days;
+    const actualSpend = spendByProject.get(project.id) ?? 0;
+    const remaining = budgetTotal - actualSpend;
+    const percentUsed = budgetTotal > 0 ? Math.min(100, (actualSpend / budgetTotal) * 100) : 0;
+    const status: "On Track" | "Over Budget" = actualSpend > budgetTotal ? "Over Budget" : "On Track";
+
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      budgetDaily,
+      projectStart: project.created_at,
+      budgetTotal,
+      actualSpend,
+      remaining,
+      percentUsed,
+      status,
+    };
+  });
+
+  detailEntries.sort((a, b) => b.lineTotal - a.lineTotal);
+
+  return {
+    projects: result,
+    details: detailEntries,
   };
 }
 

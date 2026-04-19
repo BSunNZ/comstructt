@@ -179,6 +179,39 @@ export interface ProjectSummary {
   createdAt: string;
 }
 
+export interface SpendAnalyticsProject {
+  projectId: string;
+  projectName: string;
+  budgetDaily: number;
+  projectStart: string; // created_at
+  budgetTotal: number;
+  actualSpend: number;
+  remaining: number;
+  percentUsed: number; // 0-100
+  status: "On Track" | "Over Budget";
+}
+
+export interface SpendAnalyticsDetail {
+  itemId: string;
+  projectId: string;
+  projectName: string;
+  orderId: string;
+  orderStatus: OrderStatus;
+  orderedAt: string;
+  supplierName: string;
+  category: string;
+  subcategory: string | null;
+  itemName: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface SpendAnalyticsResponse {
+  projects: SpendAnalyticsProject[];
+  details: SpendAnalyticsDetail[];
+}
+
 export interface ProjectsListResponse {
   projects: ProjectSummary[];
 }
