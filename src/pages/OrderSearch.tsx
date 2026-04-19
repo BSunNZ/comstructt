@@ -355,7 +355,7 @@ const OrderSearch = () => {
         }
       />
 
-      <main className="mx-auto max-w-md px-4 pt-5">
+      <main className="mx-auto max-w-md px-4 pt-5 pb-[max(env(safe-area-inset-bottom),1.5rem)_+_7rem] [padding-bottom:calc(env(safe-area-inset-bottom)+7.5rem)]">
         {/* Active site context */}
         <Link
           to="/sites"
