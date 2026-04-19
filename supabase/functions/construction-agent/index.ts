@@ -147,26 +147,38 @@ serve(async (req: Request) => {
         typeof body.matchCount === "number" && Number.isFinite(body.matchCount)
           ? Math.min(5, Math.max(1, Math.round(body.matchCount as number)))
           : 3;
+      const matchThreshold =
+        typeof body.matchThreshold === "number" && Number.isFinite(body.matchThreshold)
+          ? Math.max(0, Math.min(1, body.matchThreshold as number))
+          : 0.3;
+
+      console.log("[construction-agent:search] query=", query, "areaM2=", areaM2, "threshold=", matchThreshold);
 
       const embedding = await embedText(OPENAI_API_KEY, query);
       if (!embedding) return jsonError(500, "Failed to embed query");
+      console.log("[construction-agent:search] embedding length=", embedding.length);
 
-      const { data: kitMatches, error: rpcErr } = await supabase.rpc("match_kits", {
-        query_embedding: embedding,
-        match_count: matchCount,
-      });
-      if (rpcErr) {
-        console.error("[construction-agent] match_kits error", rpcErr);
-        return jsonError(500, rpcErr.message);
+      const kitMatches = await callMatchKits(supabase, embedding, matchCount, matchThreshold);
+      console.log(
+        "[construction-agent:search] raw RPC matches=",
+        Array.isArray(kitMatches) ? kitMatches.length : "n/a",
+        Array.isArray(kitMatches)
+          ? kitMatches.map((k) => ({ slug: k.slug, sim: k.similarity }))
+          : kitMatches,
+      );
+      if (kitMatches === null) {
+        return jsonError(500, "match_kits RPC failed");
       }
 
       const kits = [];
-      for (const kit of (kitMatches ?? []) as Array<{
+      for (const kit of kitMatches as Array<{
         kit_id: string;
         slug: string;
         name: string;
         trade: string;
         description: string;
+        task_description?: string | null;
+        search_keywords?: string[] | null;
         similarity: number;
         items: Array<{
           product_id: string;
@@ -212,10 +224,28 @@ serve(async (req: Request) => {
         });
       }
 
-      return new Response(JSON.stringify({ kits }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      console.log(
+        "[construction-agent:search] returning kits=",
+        kits.length,
+        "with totalItems=",
+        kits.reduce((a, k) => a + k.items.length, 0),
+      );
+
+      return new Response(
+        JSON.stringify({
+          kits,
+          debug: {
+            query,
+            embeddingLength: embedding.length,
+            rawMatchCount: Array.isArray(kitMatches) ? kitMatches.length : 0,
+            threshold: matchThreshold,
+          },
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     // ----- ACTION: sync -----------------------------------------------------
@@ -444,20 +474,21 @@ async function runMatchKits(
       message: "Failed to embed task description",
     };
   }
+  console.log("[construction-agent:chat] task=", taskDescription, "embeddingLength=", embedding.length);
 
-  const { data: kitMatches, error: rpcErr } = await supabase.rpc("match_kits", {
-    query_embedding: embedding,
-    match_count: 1,
-  });
-  if (rpcErr) {
-    console.error("[construction-agent] match_kits RPC error", rpcErr);
+  const kitMatches = await callMatchKits(supabase, embedding, 1, 0.3);
+  console.log(
+    "[construction-agent:chat] raw RPC matches=",
+    Array.isArray(kitMatches) ? kitMatches.map((k) => ({ slug: k.slug, sim: k.similarity })) : kitMatches,
+  );
+  if (kitMatches === null) {
     return {
       kitName: null,
       trade: null,
       areaM2,
       recommendations: [],
       unmatched: [],
-      message: rpcErr.message,
+      message: "match_kits RPC failed",
     };
   }
   if (!kitMatches || kitMatches.length === 0) {
@@ -536,6 +567,52 @@ async function embedText(apiKey: string, input: string): Promise<number[] | null
   }
   const json = await res.json();
   return json?.data?.[0]?.embedding ?? null;
+}
+
+// Calls the match_kits RPC. The DB function went through two signatures:
+//   v1: match_kits(query_embedding, match_count)
+//   v2: match_kits(query_embedding, match_count, match_threshold)  ← current
+// We try v2 first and gracefully fall back to v1 (then drop low-similarity
+// matches in code) so deploys can roll out independently of the migration.
+// deno-lint-ignore no-explicit-any
+async function callMatchKits(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  embedding: number[],
+  matchCount: number,
+  matchThreshold: number,
+  // deno-lint-ignore no-explicit-any
+): Promise<any[] | null> {
+  const v2 = await supabase.rpc("match_kits", {
+    query_embedding: embedding,
+    match_count: matchCount,
+    match_threshold: matchThreshold,
+  });
+  if (!v2.error) return v2.data ?? [];
+
+  const msg = String(v2.error.message ?? "");
+  // Function signature mismatch → old RPC still deployed. Fall back.
+  if (
+    msg.includes("match_threshold") ||
+    msg.toLowerCase().includes("function") && msg.toLowerCase().includes("does not exist")
+  ) {
+    console.warn("[construction-agent] match_kits v2 missing, falling back to v1:", msg);
+    const v1 = await supabase.rpc("match_kits", {
+      query_embedding: embedding,
+      match_count: matchCount,
+    });
+    if (v1.error) {
+      console.error("[construction-agent] match_kits v1 also failed", v1.error);
+      return null;
+    }
+    // deno-lint-ignore no-explicit-any
+    return ((v1.data ?? []) as any[]).filter(
+      (r) => typeof r.similarity === "number" && r.similarity >= matchThreshold,
+    );
+  }
+
+  console.error("[construction-agent] match_kits error", v2.error);
+  return null;
 }
 
 function buildEmbeddingText(kit: {
