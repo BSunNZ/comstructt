@@ -274,19 +274,9 @@ export const useWhisperVoiceInput = ({
     hasSpokenRef.current = false;
     stoppingRef.current = false;
 
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // Browser-side noise tricks help Whisper a lot on construction sites.
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Microphone permission denied";
-      setError(msg);
+    const stream = await acquireStream();
+    if (!stream) {
+      setError("Microphone permission denied");
       setInterim("");
       return;
     }
