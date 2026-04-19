@@ -272,10 +272,11 @@ export const enrichProduct = (
   row: unknown,
   projectId: string | null | undefined = null,
 ): DbProduct => {
-  const r = row as Omit<DbProduct, "price" | "priceSource" | "supplierName">;
-  const { price, priceSource, supplierName } = pickBestPrice(
+  const r = row as Omit<DbProduct, "price" | "priceSource" | "supplierName" | "listPrice">;
+  const { price, priceSource, supplierName, listPrice } = pickBestPrice(
     r.supplier_product_mapping,
     projectId,
   );
-  return { ...r, price, priceSource, supplierName } as DbProduct;
+  return { ...r, price, priceSource, supplierName, listPrice } as DbProduct;
+};
 };
