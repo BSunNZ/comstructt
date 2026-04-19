@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { orderItemsTotal } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
-import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, ClipboardCheck, X } from "lucide-react";
+import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban } from "lucide-react";
 import {
   DbOrder,
   DbOrderItem,
   DbOrderStatus,
   cancelOrder,
-  confirmOrder,
   isWithinCancelWindow,
   listOrdersForProject,
   markDelivered,
@@ -34,7 +33,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 
-type SectionKey = "Requested" | "Ordered" | "Delivered";
+type SectionKey = "Requested" | "Ordered" | "Delivered" | "Rejected";
+type TabKey = "all" | "open" | "delivered" | "rejected";
 
 const SECTION_META: Record<
   SectionKey,
@@ -91,9 +91,29 @@ const SECTION_META: Record<
     badgeBg: "bg-[hsl(140_60%_45%/0.22)]",
     badgeText: "text-[hsl(140_55%_22%)]",
   },
+  Rejected: {
+    label: "Abgelehnt",
+    description: "Vom Procurement abgelehnt · keine Lieferung",
+    Icon: Ban,
+    matches: ["rejected"],
+    headerBg: "bg-[hsl(0_85%_55%/0.18)]",
+    headerText: "text-[hsl(0_75%_32%)]",
+    accentDot: "bg-[hsl(0_85%_50%)]",
+    cardBg: "bg-[hsl(0_85%_97%)]",
+    cardRing: "ring-[hsl(0_75%_78%)]",
+    badgeBg: "bg-[hsl(0_85%_55%/0.22)]",
+    badgeText: "text-[hsl(0_75%_32%)]",
+  },
 };
 
-const SECTION_ORDER: SectionKey[] = ["Requested", "Ordered", "Delivered"];
+const SECTION_ORDER: SectionKey[] = ["Requested", "Ordered", "Delivered", "Rejected"];
+
+const TABS: { key: TabKey; label: string; sections: SectionKey[] }[] = [
+  { key: "all", label: "Alle", sections: ["Requested", "Ordered", "Delivered", "Rejected"] },
+  { key: "open", label: "Offen", sections: ["Requested", "Ordered"] },
+  { key: "delivered", label: "Geliefert", sections: ["Delivered"] },
+  { key: "rejected", label: "Abgelehnt", sections: ["Rejected"] },
+];
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
@@ -118,6 +138,7 @@ const OrderOverview = () => {
   const [selected, setSelected] = useState<DbOrder | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<DbOrder | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>("all");
 
   const refresh = async (alive: () => boolean = () => true) => {
     try {
@@ -145,24 +166,9 @@ const OrderOverview = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
-  const handleConfirm = async (o: DbOrder) => {
-    setUpdatingId(o.id);
-    try {
-      await confirmOrder(o.id);
-      toast({ title: "Order confirmed", description: "Status updated to Ordered." });
-      setSelected((s) => (s && s.id === o.id ? { ...s, status: "ordered" } : s));
-      await refresh();
-    } catch (e) {
-      const err = e as { code?: string; message?: string };
-      toast({
-        title: `Failed to confirm${err?.code ? ` [${err.code}]` : ""}`,
-        description: err?.message ?? "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setUpdatingId(null);
-    }
-  };
+  // Self-approval is intentionally NOT supported: orders can only be approved
+  // (status → 'ordered') or rejected by an external procurement authority.
+  // The site-crew UI never writes those transitions.
 
   const handleDelivered = async (o: DbOrder) => {
     setUpdatingId(o.id);
@@ -204,7 +210,12 @@ const OrderOverview = () => {
   };
 
   const grouped = useMemo(() => {
-    const out: Record<SectionKey, DbOrder[]> = { Requested: [], Ordered: [], Delivered: [] };
+    const out: Record<SectionKey, DbOrder[]> = {
+      Requested: [],
+      Ordered: [],
+      Delivered: [],
+      Rejected: [],
+    };
     for (const o of orders) {
       const norm = normalizeStatus(o.status);
       for (const k of SECTION_ORDER) {
@@ -226,6 +237,44 @@ const OrderOverview = () => {
       />
 
       <main className="mx-auto max-w-md px-4 pt-5 space-y-7">
+        {/* Status filter tabs — Rejected lives in its own bucket so the
+            standard Open/Delivered views don't get cluttered with declined
+            orders. */}
+        {!loading && !error && (
+          <div
+            role="tablist"
+            aria-label="Order status filter"
+            className="flex gap-1.5 overflow-x-auto rounded-2xl bg-muted p-1.5"
+          >
+            {TABS.map((tab) => {
+              const active = activeTab === tab.key;
+              const count = tab.sections.reduce((s, k) => s + grouped[k].length, 0);
+              return (
+                <button
+                  key={tab.key}
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold uppercase tracking-wider transition ${
+                    active
+                      ? "bg-card text-foreground shadow-press"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {tab.label}
+                  <span
+                    className={`ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${
+                      active ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {loading && (
           <div className="flex items-center justify-center gap-2 rounded-2xl bg-muted p-6 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" /> Loading orders…
@@ -236,7 +285,7 @@ const OrderOverview = () => {
           <div className="rounded-2xl bg-destructive/10 p-4 text-sm text-destructive">{error}</div>
         )}
 
-        {!loading && !error && SECTION_ORDER.map((k) => {
+        {!loading && !error && (TABS.find((t) => t.key === activeTab)?.sections ?? SECTION_ORDER).map((k) => {
           const meta = SECTION_META[k];
           const Icon = meta.Icon;
           const list = grouped[k];
@@ -330,7 +379,8 @@ const OrderOverview = () => {
                           </span>
                           <div className="flex items-center gap-1">
                             {isWithinCancelWindow(o.created_at) &&
-                              normalizeStatus(o.status) !== "delivered" && (
+                              normalizeStatus(o.status) !== "delivered" &&
+                              normalizeStatus(o.status) !== "rejected" && (
                                 <button
                                   onClick={() => setCancelTarget(o)}
                                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
@@ -433,18 +483,14 @@ const OrderOverview = () => {
                 </div>
 
                 {normalizeStatus(selected.status) === "requested" && (
-                  <button
-                    onClick={() => handleConfirm(selected)}
-                    disabled={updatingId === selected.id}
-                    className="tap-target flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold uppercase tracking-wider text-primary-foreground shadow-rugged active:translate-y-0.5 disabled:opacity-60"
-                  >
-                    {updatingId === selected.id ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <ClipboardCheck className="h-5 w-5" />
-                    )}
-                    Freigeben &amp; Bestellen
-                  </button>
+                  <p className="rounded-xl bg-[hsl(45_95%_55%/0.18)] px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-[hsl(38_90%_28%)]">
+                    Wartet auf externe Procurement-Freigabe
+                  </p>
+                )}
+                {normalizeStatus(selected.status) === "rejected" && (
+                  <p className="rounded-xl bg-[hsl(0_85%_55%/0.18)] px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-[hsl(0_75%_32%)]">
+                    Vom Procurement abgelehnt
+                  </p>
                 )}
                 {normalizeStatus(selected.status) === "ordered" && (
                   <button
