@@ -51,6 +51,7 @@ export function ConstructionAgentFAB() {
   const [results, setResults] = useState<KitResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
 
   const reqIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
