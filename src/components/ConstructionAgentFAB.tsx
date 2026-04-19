@@ -81,37 +81,33 @@ export function ConstructionAgentFAB() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, busy]);
 
-  // Debounced auto-search whenever the query (or m²) changes.
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+  const submitQuery = () => {
     const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setResults([]);
-      setError(null);
-      setHasSearched(false);
-      return;
-    }
-    debounceRef.current = setTimeout(() => {
-      void runSearch(trimmed, parseArea(areaInput));
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, areaInput, projectId]);
+    if (trimmed.length < 2 || busy) return;
+    if (trimmed === lastSubmittedRef.current) return;
+    lastSubmittedRef.current = trimmed;
+    void runSearch(trimmed, parseArea(areaInput));
+  };
 
   const runSearch = async (q: string, areaM2: number | null) => {
     if (!isSupabaseConfigured) {
-      setError("Lovable Cloud ist nicht konfiguriert.");
+      pushAssistant({ error: "Lovable Cloud ist nicht konfiguriert.", query: q });
       return;
     }
     const id = ++reqIdRef.current;
+
+    const userMsgId = `u-${id}-${Date.now()}`;
+    const assistantId = `a-${id}-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      { id: userMsgId, role: "user", text: areaM2 ? `${q} · ${areaM2} m²` : q, ts: Date.now() },
+      { id: assistantId, role: "assistant", ts: Date.now(), busy: true, query: q },
+    ]);
+    setQuery("");
     setBusy(true);
     setError(null);
+
     try {
-      // Primary: new dedicated `kit-assistant` function (fresh deploy, no
-      // chat-history baggage). Falls back to legacy `construction-agent` if
-      // the new function isn't deployed yet.
       let searchResponse = await supabase.functions.invoke("kit-assistant", {
         body: {
           action: "search",
@@ -124,7 +120,6 @@ export function ConstructionAgentFAB() {
       });
 
       if (searchResponse.error) {
-        console.warn("[ConstructionAgentFAB] kit-assistant unavailable, trying construction-agent", searchResponse.error);
         searchResponse = await supabase.functions.invoke("construction-agent", {
           body: {
             action: "search",
@@ -136,12 +131,11 @@ export function ConstructionAgentFAB() {
           },
         });
       }
-      if (id !== reqIdRef.current) return; // stale
+      if (id !== reqIdRef.current) return;
 
       let kits: KitResult[] = [];
 
       if (searchResponse.error) {
-        console.warn("[ConstructionAgentFAB] search action unavailable, trying legacy fallback", searchResponse.error);
         const userContent = areaM2 && areaM2 > 0 ? `${q} (${areaM2} m²)` : q;
         const fallback = await supabase.functions.invoke("construction-agent", {
           body: { projectId, messages: [{ role: "user", content: userContent }] },
@@ -166,26 +160,36 @@ export function ConstructionAgentFAB() {
           if (fallback.error) throw fallback.error;
           kits = parseKitResults(fallback.data, q);
         }
-        if (data && typeof data === "object" && "debug" in (data as Record<string, unknown>)) {
-          // eslint-disable-next-line no-console
-          console.log("[ConstructionAgentFAB] backend debug=", (data as { debug: unknown }).debug);
-        }
       }
-      if (kits.length === 0) {
-        setError(null);
-      }
+
       setResults(kits);
       setHasSearched(true);
+      updateAssistant(assistantId, { busy: false, kits, query: q, error: null });
     } catch (e) {
       if (id !== reqIdRef.current) return;
-      console.error("[ConstructionAgentFAB] search error", e);
       const message = e instanceof Error ? e.message : "Suche fehlgeschlagen";
-      setError(mapAssistantError(message));
-      setResults([]);
-      setHasSearched(true);
+      const mapped = mapAssistantError(message);
+      setError(mapped);
+      updateAssistant(assistantId, { busy: false, kits: [], query: q, error: mapped });
     } finally {
       if (id === reqIdRef.current) setBusy(false);
     }
+  };
+
+  const pushAssistant = (patch: Partial<Extract<ChatMessage, { role: "assistant" }>>) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `a-${Date.now()}`, role: "assistant", ts: Date.now(), busy: false, ...patch },
+    ]);
+  };
+
+  const updateAssistant = (
+    id: string,
+    patch: Partial<Extract<ChatMessage, { role: "assistant" }>>,
+  ) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id && m.role === "assistant" ? { ...m, ...patch } : m)),
+    );
   };
 
   const addKit = (kit: KitResult) => {
