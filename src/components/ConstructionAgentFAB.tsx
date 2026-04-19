@@ -109,16 +109,15 @@ export function ConstructionAgentFAB() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           // When the fake iOS keyboard inside DeviceFrame opens it sets
-          // `--ios-kb-h` on the phone screen container. We subtract that
-          // height from the dialog so the composer is never hidden behind
-          // the keys, and we lift the dialog above the keyboard with a
-          // small breathing gap. On real mobile (no DeviceFrame) the
-          // variable is 0 and the dialog stays centered.
+          // `--ios-kb-h` on the phone screen container. We shrink the
+          // dialog and lift it above the keys so the composer stays
+          // visible. On real mobile the variable is 0 and behavior is
+          // unchanged.
           className="flex flex-col gap-0 p-0"
           style={{
-            height: "min(85vh, calc(100dvh - var(--ios-kb-h, 0px) - 2rem))",
-            maxHeight: "calc(100dvh - var(--ios-kb-h, 0px) - 2rem)",
-            top: "calc(50% - (var(--ios-kb-h, 0px) / 2))",
+            height: "min(85vh, calc(100dvh - var(--ios-kb-h, 0px) - 3rem))",
+            maxHeight: "calc(100dvh - var(--ios-kb-h, 0px) - 3rem)",
+            transform: "translate(-50%, calc(-50% - (var(--ios-kb-h, 0px) / 2)))",
           }}
         >
           <DialogHeader className="border-b border-border p-4">
