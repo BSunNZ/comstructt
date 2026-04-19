@@ -44,6 +44,11 @@ const OrderSearch = () => {
   const [misuse, setMisuse] = useState<string | null>(null);
   // Only one product card's detail dropdown can be open at a time.
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
+  // Per-card draft quantity for the "+ ADD" → quantity selector → "ADD TO CART" flow.
+  // While a product id is in this map, the card shows the quantity selector +
+  // "ADD TO CART" button instead of the "+ ADD" button. The value is the draft
+  // quantity that will be added to the cart on confirm. Cleared after add.
+  const [draftQtys, setDraftQtys] = useState<Record<string, number>>({});
 
   const qtyFor = (id: string) => cart.find((l) => l.product.id === id)?.qty ?? 0;
 
@@ -529,23 +534,68 @@ const OrderSearch = () => {
                       </div>
                     </div>
 
-                    {qty === 0 ? (
-                      <button
-                        onClick={() => addToCart(p, 1)}
-                        className="tap-target mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5"
-                      >
-                        <Plus className="h-5 w-5" /> Add
-                      </button>
-                    ) : (
-                      <div className="mt-3">
-                        <QuantitySelector
-                          qty={qty}
-                          onChange={(n) => updateQty(p.id, n)}
-                          size="lg"
-                          label={p.name}
-                        />
-                      </div>
-                    )}
+                    {(() => {
+                      const draft = draftQtys[p.id];
+                      const inDraft = draft !== undefined;
+
+                      if (qty > 0 && !inDraft) {
+                        // Already in cart → show selector to update cart qty live.
+                        return (
+                          <div className="mt-3">
+                            <QuantitySelector
+                              qty={qty}
+                              onChange={(n) => updateQty(p.id, n)}
+                              size="lg"
+                              label={p.name}
+                            />
+                          </div>
+                        );
+                      }
+
+                      if (!inDraft) {
+                        // Initial state: show "+ ADD" button.
+                        return (
+                          <button
+                            onClick={() =>
+                              setDraftQtys((prev) => ({ ...prev, [p.id]: 1 }))
+                            }
+                            className="tap-target mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5"
+                          >
+                            <Plus className="h-5 w-5" /> Add
+                          </button>
+                        );
+                      }
+
+                      // Interaction state: ADD TO CART button stacked above quantity selector.
+                      return (
+                        <div className="mt-3 flex flex-col gap-3">
+                          <button
+                            onClick={() => {
+                              if (draft <= 0) return;
+                              addToCart(p, draft);
+                              setDraftQtys((prev) => {
+                                const next = { ...prev };
+                                delete next[p.id];
+                                return next;
+                              });
+                              toast({ title: "Item added", description: `${draft}× ${p.name}` });
+                            }}
+                            disabled={draft <= 0}
+                            className="tap-target flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5 disabled:opacity-50 disabled:active:translate-y-0"
+                          >
+                            <ShoppingCart className="h-5 w-5" /> Add to cart
+                          </button>
+                          <QuantitySelector
+                            qty={draft}
+                            onChange={(n) =>
+                              setDraftQtys((prev) => ({ ...prev, [p.id]: Math.max(0, n) }))
+                            }
+                            size="lg"
+                            label={p.name}
+                          />
+                        </div>
+                      );
+                    })()}
 
                     <ProductDetailDropdown
                       productId={p.id}
