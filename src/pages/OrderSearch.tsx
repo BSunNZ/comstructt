@@ -44,6 +44,11 @@ const OrderSearch = () => {
   const [misuse, setMisuse] = useState<string | null>(null);
   // Only one product card's detail dropdown can be open at a time.
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
+  // Per-card draft quantity for the "+ ADD" → quantity selector → "ADD TO CART" flow.
+  // While a product id is in this map, the card shows the quantity selector +
+  // "ADD TO CART" button instead of the "+ ADD" button. The value is the draft
+  // quantity that will be added to the cart on confirm. Cleared after add.
+  const [draftQtys, setDraftQtys] = useState<Record<string, number>>({});
 
   const qtyFor = (id: string) => cart.find((l) => l.product.id === id)?.qty ?? 0;
 
