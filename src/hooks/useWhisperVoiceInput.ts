@@ -409,5 +409,24 @@ export const useWhisperVoiceInput = ({
     /* intentionally empty */
   }, []);
 
+  // Public start/stop transparently route to whichever recogniser is
+  // currently active. If Whisper isn't supported at all in this browser
+  // we go straight to native.
+  const start = useCallback(() => {
+    if (useFallback || !whisperSupported) {
+      native.start();
+      return;
+    }
+    void startWhisper();
+  }, [useFallback, whisperSupported, native, startWhisper]);
+
+  const stop = useCallback(() => {
+    if (useFallback || !whisperSupported) {
+      native.stop();
+      return;
+    }
+    stopWhisper();
+  }, [useFallback, whisperSupported, native, stopWhisper]);
+
   return { supported, listening, interim, error, start, stop, speak };
 };
