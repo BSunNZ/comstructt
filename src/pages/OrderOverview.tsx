@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { orderItemsTotal } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
-import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, ClipboardCheck } from "lucide-react";
+import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, ClipboardCheck, X } from "lucide-react";
 import {
   DbOrder,
   DbOrderItem,
   DbOrderStatus,
+  cancelOrder,
   confirmOrder,
+  isWithinCancelWindow,
   listOrdersForProject,
   markDelivered,
   normalizeStatus,
@@ -20,6 +22,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 
 type SectionKey = "Requested" | "Ordered" | "Delivered";
