@@ -15,6 +15,7 @@
  * Deploy: supabase functions deploy sync-kit-embeddings --no-verify-jwt
  * Required secrets: OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  */
+// Deploy trigger v2
 // @ts-expect-error npm: specifier resolved at edge runtime
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 
