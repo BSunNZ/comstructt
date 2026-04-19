@@ -3,13 +3,14 @@
  * ----------------------------------------------------------------------------
  * Floating button + slide-up panel implementing the Simple Search Assistant:
  *   - User types a phrase ("Fugen machen", "50 m² Trockenbau", …).
- *   - We embed it server-side via the `search-kits` edge function and render
- *     the matched kits as Suggestion Cards with an "Add to Project" button.
+ *   - We embed it server-side via the `construction-agent` edge function
+ *     (action: "search") and render the matched kits as Suggestion Cards
+ *     with an "Add to Project" button.
  *   - No conversational loops, no math questions. If the kit has per_m²
  *     items the user can optionally enter m² to scale quantities.
  *
- * Admin: a "Embeddings synchronisieren" button calls `sync-kit-embeddings`
- * to regenerate vectors after the catalog/keywords change.
+ * Admin: a "Embeddings synchronisieren" button calls `construction-agent`
+ * with action: "sync" to regenerate vectors after the catalog/keywords change.
  *
  * REMOVAL: this component is fully self-contained. Delete this file and the
  * `<ConstructionAgentFAB />` mount in `src/App.tsx` to remove the feature.
