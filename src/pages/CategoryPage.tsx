@@ -59,6 +59,7 @@ const CategoryPage = () => {
           </div>
         )}
       </main>
+      <CartBar />
     </div>
   );
 };
