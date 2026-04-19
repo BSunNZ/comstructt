@@ -558,7 +558,11 @@ async function embedText(apiKey: string, input: string): Promise<number[] | null
     body: JSON.stringify({ model: "text-embedding-3-small", input }),
   });
   if (!res.ok) {
-    console.error("[construction-agent] embed failed", res.status, await res.text());
+    const details = await res.text();
+    console.error("[construction-agent] embed failed", res.status, details);
+    if (res.status === 401 || res.status === 404) {
+      throw new Error(`OpenAI embedding request failed (${res.status})`);
+    }
     return null;
   }
   const json = await res.json();
@@ -803,4 +807,14 @@ function jsonOk(data: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function isBackendConfigError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("openai_api_key") ||
+    normalized.includes("service role") ||
+    normalized.includes("openai embedding request failed") ||
+    normalized.includes("api connection error")
+  );
 }

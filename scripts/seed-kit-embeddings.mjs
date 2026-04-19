@@ -2,7 +2,7 @@
  * seed-kit-embeddings.mjs
  * ----------------------------------------------------------------------------
  * One-shot script: loops through every row in public.kits, generates an
- * OpenAI text-embedding-3-small vector from "<name>. <trade>. <keywords>",
+ * OpenAI text-embedding-3-small vector from "<name>. <trade>. <task_description>. <search_keywords>",
  * and writes it back into the embedding column.
  *
  * Run ONCE after applying the construction_agent_kits migration:
@@ -89,11 +89,18 @@ const buildText = (kit) =>
     .filter(Boolean)
     .join(". ");
 
+if (typeof buildText !== "function") {
+  throw new Error("Embedding sync misconfigured: buildText is unavailable");
+}
+
 const kits = await fetchKits();
 console.log(`Found ${kits.length} kits. Embedding…`);
 
 for (const kit of kits) {
   const text = buildText(kit);
+  if (!text.trim()) {
+    throw new Error(`Kit ${kit.slug} has no searchable text for embedding sync`);
+  }
   process.stdout.write(`  • ${kit.slug} … `);
   const vec = await embed(text);
   await updateEmbedding(kit.id, vec);
