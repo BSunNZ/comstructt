@@ -439,7 +439,7 @@ const OrderOverview = () => {
                     <span className="font-semibold">{selected.ordered_by}</span>
                   </div>
                 )}
-                {selected.notes && (
+                {normalizeStatus(selected.status) !== "rejected" && selected.notes && (
                   <div className="text-sm">
                     <p className="text-muted-foreground">Notes</p>
                     <p className="font-medium">{selected.notes}</p>
@@ -488,9 +488,17 @@ const OrderOverview = () => {
                   </p>
                 )}
                 {normalizeStatus(selected.status) === "rejected" && (
-                  <p className="rounded-xl bg-[hsl(0_85%_55%/0.18)] px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-[hsl(0_75%_32%)]">
-                    Vom Procurement abgelehnt
-                  </p>
+                  <div className="rounded-xl border-2 border-[hsl(0_75%_55%)] bg-[hsl(0_85%_97%)] p-4">
+                    <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[hsl(0_75%_32%)]">
+                      <Ban className="h-4 w-4" />
+                      Grund der Ablehnung
+                    </p>
+                    <p className="mt-2 text-sm font-medium leading-snug text-[hsl(0_75%_25%)]">
+                      {selected.rejection_reason?.trim()
+                        ? selected.rejection_reason
+                        : "Kein konkreter Grund angegeben."}
+                    </p>
+                  </div>
                 )}
                 {normalizeStatus(selected.status) === "ordered" && (
                   <button

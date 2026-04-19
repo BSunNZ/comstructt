@@ -68,6 +68,7 @@ export type DbOrder = {
   site_name: string | null;
   ordered_by: string | null;
   notes: string | null;
+  rejection_reason: string | null;
   // Maintained by DB trigger (tg_order_items_recalc). Always in sync with order_items.
   total_price: number | null;
   items: unknown; // legacy jsonb column, ignored in new flow
