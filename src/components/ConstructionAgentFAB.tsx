@@ -1,113 +1,149 @@
 /**
  * ConstructionAgentFAB
  * ----------------------------------------------------------------------------
- * Floating chat button + slide-up panel that talks to the `construction-agent`
- * Supabase Edge Function. The agent runs GPT-4o-mini with one tool
- * (search_database_for_kits → pgvector RPC) and answers in natural language.
+ * Floating button + slide-up panel implementing the Simple Search Assistant:
+ *   - User types a phrase ("Fugen machen", "50 m² Trockenbau", …).
+ *   - We embed it server-side via the `search-kits` edge function and render
+ *     the matched kits as Suggestion Cards with an "Add to Project" button.
+ *   - No conversational loops, no math questions. If the kit has per_m²
+ *     items the user can optionally enter m² to scale quantities.
+ *
+ * Admin: a "Embeddings synchronisieren" button calls `sync-kit-embeddings`
+ * to regenerate vectors after the catalog/keywords change.
  *
  * REMOVAL: this component is fully self-contained. Delete this file and the
  * `<ConstructionAgentFAB />` mount in `src/App.tsx` to remove the feature.
  */
 import { useEffect, useRef, useState } from "react";
-import { MessageCircle, Send, Loader2, X, Sparkles } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { Sparkles, Search, Loader2, X, RefreshCw, Plus, Package } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { useApp } from "@/store/app";
 import { toast } from "@/hooks/use-toast";
-import { parseAgentResponse, recommendationToProduct, type AgentRecommendation } from "@/lib/constructionAgent";
+import { recommendationToProduct, type AgentRecommendation } from "@/lib/constructionAgent";
 
-type ChatRole = "user" | "assistant";
-type ChatMsg = { role: ChatRole; content: string; recommendations?: AgentRecommendation[] };
-
-// Conversation seed shown the first time the user opens the chat. Helps
-// nudge them toward the kinds of prompts the agent handles best.
-const WELCOME: ChatMsg = {
-  role: "assistant",
-  content:
-    "👋 Moin! Ich bin dein Bau-Assistent. Sag mir, was du baust — z.B. *„50 m² Trockenbau“* oder *„Elektro-Rohinstallation“* — und ich stelle dir das passende Material zusammen.",
+type KitResult = {
+  kitId: string;
+  slug: string;
+  name: string;
+  trade: string;
+  description: string;
+  similarity: number;
+  items: AgentRecommendation[];
+  unmatched: string[];
 };
+
+const SEARCH_DEBOUNCE_MS = 350;
 
 export function ConstructionAgentFAB() {
   const projectId = useApp((s) => s.projectId);
   const addToCart = useApp((s) => s.addToCart);
+
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMsg[]>([WELCOME]);
-  const [input, setInput] = useState("");
+  const [query, setQuery] = useState("");
+  const [areaInput, setAreaInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [results, setResults] = useState<KitResult[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
-  // Auto-scroll to the latest message whenever the list grows.
+  const reqIdRef = useRef(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced auto-search whenever the query (or m²) changes.
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setResults([]);
+      setError(null);
+      setHasSearched(false);
+      return;
     }
-  }, [messages, busy]);
+    debounceRef.current = setTimeout(() => {
+      void runSearch(trimmed, parseArea(areaInput));
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, areaInput, projectId]);
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || busy) return;
-    setError(null);
-    setInput("");
-
-    const next: ChatMsg[] = [...messages, { role: "user", content: text }];
-    setMessages(next);
+  const runSearch = async (q: string, areaM2: number | null) => {
+    if (!isSupabaseConfigured) {
+      setError("Lovable Cloud ist nicht konfiguriert.");
+      return;
+    }
+    const id = ++reqIdRef.current;
     setBusy(true);
-
+    setError(null);
     try {
-      if (!isSupabaseConfigured) {
-        throw new Error("Supabase is not configured — cannot reach the agent.");
-      }
-      // Send the FULL conversation history so the agent has context for
-      // multi-turn flows like "How many m²? → 50 → here's your kit".
-      const payloadMessages = next
-        .filter((m) => m !== WELCOME) // drop the local welcome bubble
-        .map((m) => ({ role: m.role, content: m.content }));
+      const { data, error: fnError } = await supabase.functions.invoke("search-kits", {
+        body: { query: q, projectId, areaM2, matchCount: 3 },
+      });
+      if (id !== reqIdRef.current) return; // stale
+      if (fnError) throw fnError;
+      const kits = parseKitResults(data);
+      setResults(kits);
+      setHasSearched(true);
+    } catch (e) {
+      if (id !== reqIdRef.current) return;
+      console.error("[ConstructionAgentFAB] search error", e);
+      setError(e instanceof Error ? e.message : "Suche fehlgeschlagen");
+      setResults([]);
+      setHasSearched(true);
+    } finally {
+      if (id === reqIdRef.current) setBusy(false);
+    }
+  };
 
-      const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
-        body: { messages: payloadMessages, projectId },
+  const addKit = (kit: KitResult) => {
+    if (kit.items.length === 0) return;
+    kit.items.forEach((rec) => addToCart(recommendationToProduct(rec), rec.quantity));
+    toast({
+      title: "Zum Projekt hinzugefügt",
+      description: `${kit.items.length} Artikel aus „${kit.name}" übernommen.`,
+    });
+  };
+
+  const syncEmbeddings = async () => {
+    if (syncing || !isSupabaseConfigured) return;
+    setSyncing(true);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke("sync-kit-embeddings", {
+        body: {},
       });
       if (fnError) throw fnError;
-
-      const parsed = parseAgentResponse(data);
-      if (!parsed?.reply?.trim()) throw new Error("Empty response from agent");
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: parsed.reply.trim(),
-          recommendations: parsed.recommendations,
-        },
-      ]);
+      const synced = typeof data?.synced === "number" ? data.synced : 0;
+      const failed = typeof data?.failed === "number" ? data.failed : 0;
+      toast({
+        title: "Embeddings aktualisiert",
+        description:
+          failed > 0
+            ? `${synced} synchronisiert, ${failed} Fehler.`
+            : `${synced} Kits neu eingebettet.`,
+      });
+      // If the user already searched, refresh the results.
+      if (query.trim().length >= 2) {
+        await runSearch(query.trim(), parseArea(areaInput));
+      }
     } catch (e) {
-      console.error("[ConstructionAgentFAB] agent error", e);
-      const msg = e instanceof Error ? e.message : "Something went wrong";
-      setError(msg);
+      console.error("[ConstructionAgentFAB] sync error", e);
+      toast({
+        title: "Sync fehlgeschlagen",
+        description: e instanceof Error ? e.message : "Unbekannter Fehler",
+        variant: "destructive",
+      });
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  };
-
-  const reset = () => {
-    setMessages([WELCOME]);
-    setError(null);
-    setInput("");
   };
 
   return (
     <>
-      {/* FAB — bottom-right, anchored to the phone-shell. */}
       <button
         type="button"
         aria-label="Open Construction Assistant"
@@ -120,11 +156,6 @@ export function ConstructionAgentFAB() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          // When the fake iOS keyboard inside DeviceFrame opens it sets
-          // `--ios-kb-h` on the phone screen container. We shrink the
-          // dialog and lift it above the keys so the composer stays
-          // visible. On real mobile the variable is 0 and behavior is
-          // unchanged.
           className="flex flex-col gap-0 p-0"
           style={{
             height: "min(85vh, calc(100dvh - var(--ios-kb-h, 0px) - 3rem))",
@@ -136,115 +167,206 @@ export function ConstructionAgentFAB() {
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="grid h-9 w-9 place-items-center rounded-full bg-primary/10 text-primary">
-                  <MessageCircle className="h-5 w-5" />
+                  <Sparkles className="h-5 w-5" />
                 </span>
                 <div>
                   <DialogTitle className="text-base">Bau-Assistent</DialogTitle>
                   <DialogDescription className="text-xs">
-                    AI agent · GPT-4o-mini · pgvector kit search
+                    Sag, was du brauchst — passende Kits sofort.
                   </DialogDescription>
                 </div>
               </div>
-              {messages.length > 1 && (
-                <button
-                  type="button"
-                  onClick={reset}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Neu starten
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={syncEmbeddings}
+                disabled={syncing}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+                title="Regeneriere AI-Embeddings für alle Kits"
+              >
+                {syncing ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                Sync
+              </button>
             </div>
           </DialogHeader>
 
-          {/* Messages */}
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
-            {messages.map((m, i) => (
-              <div
-                key={i}
-                className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                    m.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-foreground"
-                  }`}
-                >
-                  {m.role === "assistant" ? (
-                    <div className="space-y-3">
-                      <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-foreground">
-                        <ReactMarkdown>{m.content}</ReactMarkdown>
-                      </div>
-                      {m.recommendations && m.recommendations.length > 0 && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => {
-                            m.recommendations?.forEach((rec) => {
-                              addToCart(recommendationToProduct(rec), rec.quantity);
-                            });
-                            toast({
-                              title: "Zum Warenkorb hinzugefügt",
-                              description: `${m.recommendations.length} Artikel übernommen.`,
-                            });
-                          }}
-                        >
-                          Alles in den Warenkorb
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="whitespace-pre-wrap">{m.content}</p>
-                  )}
-                </div>
-              </div>
-            ))}
+          {/* Search composer */}
+          <div className="border-b border-border p-3 space-y-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder='z.B. „Fugen machen", „50 m² Trockenbau", „Bad abdichten"'
+                className="pl-9"
+                autoFocus
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                m² (optional)
+              </label>
+              <Input
+                inputMode="decimal"
+                value={areaInput}
+                onChange={(e) => setAreaInput(e.target.value.replace(/[^\d.,]/g, ""))}
+                placeholder="z.B. 50"
+                className="h-8 w-24 text-sm"
+              />
+            </div>
+          </div>
 
+          {/* Results */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
             {busy && (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Agent denkt nach…</span>
-                </div>
+              <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Suche passende Kits…
               </div>
             )}
 
             {error && (
-              <div className="flex justify-start">
-                <div className="flex items-start gap-2 rounded-2xl bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>{error}</span>
-                </div>
+              <div className="flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{error}</span>
               </div>
             )}
-          </div>
 
-          {/* Composer */}
-          <div className="border-t border-border p-3">
-            <div className="flex items-center gap-2">
-              <Input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onKeyDown}
-                disabled={busy}
-                placeholder="Was baust du? z.B. „50 m² Trockenbau“"
-                className="flex-1"
-                autoFocus
-              />
-              <Button
-                type="button"
-                size="icon"
-                onClick={send}
-                disabled={busy || !input.trim()}
-                aria-label="Send message"
-              >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
-            </div>
+            {!busy && !error && hasSearched && results.length === 0 && (
+              <div className="rounded-xl bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
+                Kein passendes Kit gefunden. Versuche andere Begriffe.
+              </div>
+            )}
+
+            {!busy && !hasSearched && results.length === 0 && (
+              <div className="rounded-xl bg-muted/50 px-3 py-6 text-center text-xs text-muted-foreground">
+                Tippe oben, um Kits zu finden.
+              </div>
+            )}
+
+            {results.map((kit) => (
+              <SuggestionCard key={kit.kitId} kit={kit} onAdd={() => addKit(kit)} />
+            ))}
           </div>
         </DialogContent>
       </Dialog>
     </>
   );
+}
+
+function SuggestionCard({ kit, onAdd }: { kit: KitResult; onAdd: () => void }) {
+  const total = kit.items.reduce(
+    (acc, it) => acc + (it.unitPrice ?? 0) * it.quantity,
+    0,
+  );
+  return (
+    <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-foreground">{kit.name}</p>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            {kit.trade} · {Math.round(kit.similarity * 100)}% Treffer
+          </p>
+        </div>
+        {total > 0 && (
+          <span className="shrink-0 font-display text-sm">€{total.toFixed(2)}</span>
+        )}
+      </div>
+
+      {kit.items.length === 0 ? (
+        <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
+          Keine Produkte verfügbar.
+        </p>
+      ) : (
+        <ul className="mb-3 space-y-1">
+          {kit.items.map((it) => (
+            <li
+              key={it.productId}
+              className="flex items-center gap-2 text-xs text-foreground"
+            >
+              <Package className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="flex-1 truncate">{it.name}</span>
+              <span className="shrink-0 text-muted-foreground">
+                {it.quantity}× {it.unit}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Button
+        type="button"
+        size="sm"
+        className="w-full"
+        disabled={kit.items.length === 0}
+        onClick={onAdd}
+      >
+        <Plus className="mr-1 h-4 w-4" /> Add to Project
+      </Button>
+    </div>
+  );
+}
+
+function parseArea(input: string): number | null {
+  const cleaned = input.replace(",", ".").trim();
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function parseKitResults(data: unknown): KitResult[] {
+  if (!data || typeof data !== "object") return [];
+  const raw = (data as { kits?: unknown }).kits;
+  if (!Array.isArray(raw)) return [];
+  const out: KitResult[] = [];
+  for (const k of raw) {
+    if (!k || typeof k !== "object") continue;
+    const r = k as Record<string, unknown>;
+    const items = Array.isArray(r.items)
+      ? (r.items
+          .map((item): AgentRecommendation | null => {
+            if (!item || typeof item !== "object") return null;
+            const it = item as Record<string, unknown>;
+            const productId = typeof it.productId === "string" ? it.productId : null;
+            const name = typeof it.name === "string" ? it.name : null;
+            const unit = typeof it.unit === "string" ? it.unit : null;
+            const quantity = Number(it.quantity);
+            if (!productId || !name || !unit || !Number.isFinite(quantity) || quantity <= 0)
+              return null;
+            const unitPrice = Number(it.unitPrice);
+            const listPrice = Number(it.listPrice);
+            return {
+              productId,
+              name,
+              sku: typeof it.sku === "string" ? it.sku : null,
+              unit,
+              quantity: Math.max(1, Math.ceil(quantity)),
+              unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : null,
+              supplier: typeof it.supplier === "string" ? it.supplier : null,
+              category: typeof it.category === "string" ? it.category : null,
+              subcategory: typeof it.subcategory === "string" ? it.subcategory : null,
+              priceSource:
+                it.priceSource === "project" || it.priceSource === "contract"
+                  ? it.priceSource
+                  : null,
+              listPrice: Number.isFinite(listPrice) && listPrice > 0 ? listPrice : null,
+            };
+          })
+          .filter(Boolean) as AgentRecommendation[])
+      : [];
+    out.push({
+      kitId: typeof r.kitId === "string" ? r.kitId : String(r.kitId ?? ""),
+      slug: typeof r.slug === "string" ? r.slug : "",
+      name: typeof r.name === "string" ? r.name : "Kit",
+      trade: typeof r.trade === "string" ? r.trade : "",
+      description: typeof r.description === "string" ? r.description : "",
+      similarity: Number(r.similarity) || 0,
+      items,
+      unmatched: Array.isArray(r.unmatched) ? r.unmatched.map(String) : [],
+    });
+  }
+  return out;
 }

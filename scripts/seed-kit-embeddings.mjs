@@ -33,9 +33,16 @@ const restHeaders = {
 };
 
 async function fetchKits() {
-  const url = `${SUPABASE_URL}/rest/v1/kits?select=id,slug,name,trade,keywords`;
-  const res = await fetch(url, { headers: restHeaders });
-  if (!res.ok) throw new Error(`Fetch kits failed: ${res.status} ${await res.text()}`);
+  // search_keywords is the new richer keyword column. Try a wide select first
+  // and gracefully fall back if the column does not exist yet.
+  const wide = `${SUPABASE_URL}/rest/v1/kits?select=id,slug,name,trade,description,keywords,search_keywords,task_description`;
+  let res = await fetch(wide, { headers: restHeaders });
+  if (!res.ok) {
+    console.warn("Wide select failed, retrying without new columns…");
+    const url = `${SUPABASE_URL}/rest/v1/kits?select=id,slug,name,trade,description,keywords`;
+    res = await fetch(url, { headers: restHeaders });
+    if (!res.ok) throw new Error(`Fetch kits failed: ${res.status} ${await res.text()}`);
+  }
   return res.json();
 }
 
@@ -63,11 +70,30 @@ async function updateEmbedding(id, embedding) {
   if (!res.ok) throw new Error(`Update failed for ${id}: ${res.status} ${await res.text()}`);
 }
 
+const toList = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map(String).map((s) => s.trim()).filter(Boolean);
+  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  return [];
+};
+
+const buildText = (kit) =>
+  [
+    kit.name,
+    kit.trade,
+    kit.task_description,
+    kit.description,
+    toList(kit.search_keywords).join(", "),
+    toList(kit.keywords).join(", "),
+  ]
+    .filter(Boolean)
+    .join(". ");
+
 const kits = await fetchKits();
 console.log(`Found ${kits.length} kits. Embedding…`);
 
 for (const kit of kits) {
-  const text = `${kit.name}. ${kit.trade}. ${(kit.keywords || []).join(", ")}`;
+  const text = buildText(kit);
   process.stdout.write(`  • ${kit.slug} … `);
   const vec = await embed(text);
   await updateEmbedding(kit.id, vec);
