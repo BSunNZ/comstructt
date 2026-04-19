@@ -17,11 +17,15 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
       <Sonner />
       <BrowserRouter>
         <DeviceFrame>
+          {/* phone-shell is `relative` (see index.css) — mounting the
+              Toaster inside it makes the toast viewport (which uses
+              `absolute top-2`) anchor to the iPhone screen, not the
+              outer browser window. */}
           <div className="phone-shell shadow-rugged">
+            <Toaster />
             <Routes>
               <Route path="/" element={<OrderSearch />} />
               <Route path="/sites" element={<Index />} />
