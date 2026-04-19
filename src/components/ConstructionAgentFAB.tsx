@@ -15,9 +15,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useApp } from "@/store/app";
+import { toast } from "@/hooks/use-toast";
+import { parseAgentResponse, recommendationToProduct, type AgentRecommendation } from "@/lib/constructionAgent";
 
 type ChatRole = "user" | "assistant";
-type ChatMsg = { role: ChatRole; content: string };
+type ChatMsg = { role: ChatRole; content: string; recommendations?: AgentRecommendation[] };
 
 // Conversation seed shown the first time the user opens the chat. Helps
 // nudge them toward the kinds of prompts the agent handles best.
@@ -28,6 +31,8 @@ const WELCOME: ChatMsg = {
 };
 
 export function ConstructionAgentFAB() {
+  const projectId = useApp((s) => s.projectId);
+  const addToCart = useApp((s) => s.addToCart);
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([WELCOME]);
   const [input, setInput] = useState("");
@@ -63,14 +68,21 @@ export function ConstructionAgentFAB() {
         .map((m) => ({ role: m.role, content: m.content }));
 
       const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
-        body: { messages: payloadMessages },
+        body: { messages: payloadMessages, projectId },
       });
       if (fnError) throw fnError;
 
-      const reply = (data as { reply?: string } | null)?.reply?.trim();
-      if (!reply) throw new Error("Empty response from agent");
+      const parsed = parseAgentResponse(data);
+      if (!parsed?.reply?.trim()) throw new Error("Empty response from agent");
 
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: parsed.reply.trim(),
+          recommendations: parsed.recommendations,
+        },
+      ]);
     } catch (e) {
       console.error("[ConstructionAgentFAB] agent error", e);
       const msg = e instanceof Error ? e.message : "Something went wrong";
@@ -160,8 +172,27 @@ export function ConstructionAgentFAB() {
                   }`}
                 >
                   {m.role === "assistant" ? (
-                    <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-foreground">
-                      <ReactMarkdown>{m.content}</ReactMarkdown>
+                    <div className="space-y-3">
+                      <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-foreground">
+                        <ReactMarkdown>{m.content}</ReactMarkdown>
+                      </div>
+                      {m.recommendations && m.recommendations.length > 0 && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            m.recommendations?.forEach((rec) => {
+                              addToCart(recommendationToProduct(rec), rec.quantity);
+                            });
+                            toast({
+                              title: "Zum Warenkorb hinzugefügt",
+                              description: `${m.recommendations.length} Artikel übernommen.`,
+                            });
+                          }}
+                        >
+                          Alles in den Warenkorb
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <p className="whitespace-pre-wrap">{m.content}</p>
