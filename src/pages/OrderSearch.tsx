@@ -466,6 +466,7 @@ const OrderSearch = () => {
               <button
                 type="button"
                 onClick={toggleVoice}
+                onPointerDown={() => prewarmVoice?.()}
                 aria-label={listening ? "Stop voice input" : "Start voice input"}
                 aria-pressed={listening}
                 title={voiceSupported ? "Voice input" : "Voice input not supported"}
