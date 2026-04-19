@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { displayOrderTotal, formatEuro } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
-import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban } from "lucide-react";
+import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban, ChevronDown } from "lucide-react";
 import {
   DbOrder,
   DbOrderItem,
