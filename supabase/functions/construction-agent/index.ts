@@ -27,6 +27,8 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const BUILD_VERSION = "v5-2026-04-19T13:18:00Z";
+
 const SYSTEM_PROMPT = `You are an expert construction assistant helping a German construction crew on-site.
 
 You help them figure out which materials they need for a task. You speak the user's language (German or English) and keep answers SHORT, practical, and friendly — like a foreman, not a textbook.
@@ -100,9 +102,6 @@ serve(async (req: Request) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // Build marker — bump to force a fresh edge deploy when source-only
-  // changes (like comment edits) get deduped by the deploy pipeline.
-  const BUILD_VERSION = "v4-2026-04-19T13:05";
   console.log(`[construction-agent] build=${BUILD_VERSION} method=${req.method}`);
 
   try {
@@ -128,6 +127,9 @@ serve(async (req: Request) => {
     }
 
     const action = typeof body.action === "string" ? body.action : "chat";
+    console.log(
+      `[construction-agent] build=${BUILD_VERSION} action=${action} bodyKeys=${Object.keys(body).join(",")}`,
+    );
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
@@ -230,21 +232,15 @@ serve(async (req: Request) => {
         kits.reduce((a, k) => a + k.items.length, 0),
       );
 
-      return new Response(
-        JSON.stringify({
-          kits,
-          debug: {
-            query,
-            embeddingLength: embedding.length,
-            rawMatchCount: Array.isArray(kitMatches) ? kitMatches.length : 0,
-            threshold: matchThreshold,
-          },
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return jsonOk({
+        kits,
+        debug: {
+          query,
+          embeddingLength: embedding.length,
+          rawMatchCount: Array.isArray(kitMatches) ? kitMatches.length : 0,
+          threshold: matchThreshold,
         },
-      );
+      });
     }
 
     // ----- ACTION: sync -----------------------------------------------------
@@ -312,15 +308,12 @@ serve(async (req: Request) => {
         }
       }
 
-      return new Response(
-        JSON.stringify({
-          synced,
-          failed,
-          total: kits.length,
-          errors: errors.length > 0 ? errors : undefined,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonOk({
+        synced,
+        failed,
+        total: kits.length,
+        errors: errors.length > 0 ? errors : undefined,
+      });
     }
 
     // ----- ACTION: chat (default) ------------------------------------------
@@ -434,13 +427,10 @@ serve(async (req: Request) => {
         "Entschuldigung — ich konnte gerade keine Antwort generieren. Bitte nochmal versuchen.";
     }
 
-    return new Response(
-      JSON.stringify({
-        reply: finalText,
-        recommendations: state.recommendations ?? undefined,
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonOk({
+      reply: finalText,
+      recommendations: state.recommendations ?? undefined,
+    });
   } catch (e) {
     console.error("[construction-agent] error", e);
     return jsonError(500, e instanceof Error ? e.message : "Unknown error");
@@ -796,6 +786,13 @@ function pickBestPrice(
 
 function jsonError(status: number, message: string) {
   return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function jsonOk(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
