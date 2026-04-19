@@ -165,24 +165,9 @@ const OrderOverview = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
-  const handleConfirm = async (o: DbOrder) => {
-    setUpdatingId(o.id);
-    try {
-      await confirmOrder(o.id);
-      toast({ title: "Order confirmed", description: "Status updated to Ordered." });
-      setSelected((s) => (s && s.id === o.id ? { ...s, status: "ordered" } : s));
-      await refresh();
-    } catch (e) {
-      const err = e as { code?: string; message?: string };
-      toast({
-        title: `Failed to confirm${err?.code ? ` [${err.code}]` : ""}`,
-        description: err?.message ?? "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setUpdatingId(null);
-    }
-  };
+  // Self-approval is intentionally NOT supported: orders can only be approved
+  // (status → 'ordered') or rejected by an external procurement authority.
+  // The site-crew UI never writes those transitions.
 
   const handleDelivered = async (o: DbOrder) => {
     setUpdatingId(o.id);
@@ -224,7 +209,12 @@ const OrderOverview = () => {
   };
 
   const grouped = useMemo(() => {
-    const out: Record<SectionKey, DbOrder[]> = { Requested: [], Ordered: [], Delivered: [] };
+    const out: Record<SectionKey, DbOrder[]> = {
+      Requested: [],
+      Ordered: [],
+      Delivered: [],
+      Rejected: [],
+    };
     for (const o of orders) {
       const norm = normalizeStatus(o.status);
       for (const k of SECTION_ORDER) {
