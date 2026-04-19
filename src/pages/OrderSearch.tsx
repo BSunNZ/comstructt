@@ -756,11 +756,18 @@ const OrderSearch = () => {
           screen on desktop, since DeviceFrame creates a containing block via
           translateZ). Stays put while the product list scrolls underneath. */}
       <div
-        className="fixed inset-x-0 z-50 mx-auto w-full max-w-[430px] border-t border-border bg-background/95 px-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 transition-[bottom] duration-200"
+        className="fixed inset-x-0 z-50 mx-auto w-full max-w-[430px] border-t border-border bg-background/95 px-4 pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 transition-[bottom,padding] duration-200"
         // When the fake iOS keyboard is open inside DeviceFrame it sets
-        // --ios-kb-h on the screen container; lifting the cart bar by that
-        // amount keeps it visible above the keyboard during the demo.
-        style={{ bottom: "var(--ios-kb-h, 0px)" }}
+        // --ios-kb-h on the screen container. Lift by that amount + 8px so
+        // the teal button sits just above the keys with a small breathing
+        // gap, and collapse the bottom safe-area padding (which is meant
+        // for the home indicator, not the keyboard) so the bar doesn't
+        // float far above the keyboard.
+        style={{
+          bottom: "calc(var(--ios-kb-h, 0px) + (var(--ios-kb-open, 0) * 8px))",
+          paddingBottom:
+            "calc((1 - var(--ios-kb-open, 0)) * max(env(safe-area-inset-bottom), 1.5rem) + var(--ios-kb-open, 0) * 8px)",
+        }}
       >
         <button
           onClick={() => nav("/cart")}
