@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Comstruct — Clean construction-tech design system
+   Teal primary, soft neutrals, iPhone-first.
+   All colors HSL.
+*/
+
+@layer base {
+  :root {
+    /* Surfaces — soft neutral */
+    --background: 210 20% 98%;
+    --foreground: 200 25% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 200 25% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 200 25% 12%;
+
+    /* Primary — Comstruct teal */
+    --primary: 184 45% 30%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 184 50% 40%;
+
+    /* Secondary — deep teal/ink for top bar */
+    --secondary: 195 35% 18%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 200 18% 94%;
+    --muted-foreground: 200 12% 40%;
+
+    --accent: 158 65% 42%; /* Comstruct success green */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 75% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 158 65% 38%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 35 95% 50%;
+    --warning-foreground: 200 25% 12%;
+
+    /* Subcategory icon accents — Comstruct palette extension */
+    --icon-electric: 38 92% 50%;     /* amber — Elektro */
+    --icon-fastener: 200 25% 25%;    /* steel ink — Befestigung */
+    --icon-tool: 184 45% 30%;        /* primary teal — Werkzeug */
+    --icon-measure: 220 70% 50%;     /* blue — Messwerkzeug */
+    --icon-paint: 280 55% 50%;       /* violet — Farbe / Malerbedarf */
+    --icon-chem: 158 65% 38%;        /* green — Chemie */
+    --icon-seal: 195 80% 40%;        /* cyan — Dichtstoffe */
+    --icon-clean: 175 60% 42%;       /* mint — Reinigung */
+    --icon-ppe: 12 80% 50%;          /* safety orange — PSA */
+    --icon-transport: 25 85% 45%;    /* construction orange — Transport */
+    --icon-write: 200 25% 25%;       /* ink — Schreibwaren */
+    --icon-pack: 30 40% 45%;         /* kraft brown — Verpackung */
+    --icon-waste: 0 0% 35%;          /* graphite — Entsorgung */
+    --icon-mark: 50 95% 45%;         /* hi-vis yellow — Markierung */
+    --icon-default: 200 25% 25%;
+
+    --border: 200 18% 88%;
+    --input: 200 18% 90%;
+    --ring: 184 45% 30%;
+
+    --radius: 1rem;
+
+    /* Comstruct gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(184 45% 30%), hsl(184 50% 40%));
+    --gradient-steel: linear-gradient(160deg, hsl(195 35% 16%), hsl(195 30% 24%));
+    --gradient-hazard: linear-gradient(90deg, hsl(184 45% 30%), hsl(158 65% 42%));
+
+    /* Shadows — soft, modern */
+    --shadow-rugged: 0 1px 0 0 hsl(200 25% 12% / 0.04), 0 8px 24px -8px hsl(195 35% 18% / 0.18);
+    --shadow-press: 0 1px 0 0 hsl(200 25% 12% / 0.06);
+    --shadow-glow: 0 0 0 4px hsl(184 45% 30% / 0.18);
+
+    /* Sidebar */
+    --sidebar-background: 195 35% 18%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 184 45% 30%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 195 30% 24%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 195 30% 24%;
+    --sidebar-ring: 184 45% 30%;
+  }
+
+  .dark {
+    --background: 200 25% 8%;
+    --foreground: 0 0% 96%;
+    --card: 200 22% 12%;
+    --card-foreground: 0 0% 96%;
+    --popover: 200 22% 12%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 184 50% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 200 18% 18%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 200 18% 16%;
+    --muted-foreground: 200 10% 65%;
+    --accent: 158 60% 45%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 200 18% 20%;
+    --input: 200 18% 20%;
+    --ring: 184 50% 42%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  }
+  h1, h2, h3, h4 {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer components {
+  .hazard-stripe {
+    background: var(--gradient-hazard);
+  }
+  .tap-target {
+    min-height: 56px;
+  }
+  /* iPhone-first frame: phone-width column centered on larger screens.
+     Inside the desktop DeviceFrame the parent is narrower than 430px, so
+     `w-full` (100% of parent) keeps the column from overflowing the
+     simulated phone screen. */
+  .phone-shell {
+    @apply mx-auto w-full max-w-[430px] min-h-screen bg-background relative overflow-x-hidden;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
