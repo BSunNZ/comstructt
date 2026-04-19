@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { PortalContainerContext } from "./PortalContainer";
+import { IOSKeyboard } from "./IOSKeyboard";
 
 /**
  * DeviceFrame
@@ -134,11 +135,19 @@ export const DeviceFrame = ({ children }: { children: ReactNode }) => {
                     phone screen. The OUTER wrapper above already has
                     `translateZ(0)` to anchor fixed descendants to the
                     phone screen, which is what we want. */}
-                <div className="absolute inset-0 overflow-y-auto overflow-x-hidden">
+                <div
+                  className="absolute inset-0 overflow-y-auto overflow-x-hidden"
+                  style={{ paddingBottom: "var(--ios-kb-h, 0px)" }}
+                >
                   <PortalContainerContext.Provider value={portalEl}>
                     {children}
                   </PortalContainerContext.Provider>
                 </div>
+
+                {/* Fake iOS keyboard — slides up when any input inside the
+                    phone screen is focused. Desktop-only by virtue of being
+                    rendered inside this DeviceFrame branch. */}
+                <IOSKeyboard container={portalEl} />
 
                 {/* iPhone 14-style notch — attached to the top edge,
                     narrower than a Dynamic Island, with rounded bottom corners. */}
