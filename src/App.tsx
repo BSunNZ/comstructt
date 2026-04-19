@@ -12,15 +12,33 @@ import OrderOverview from "./pages/OrderOverview.tsx";
 import ListPage from "./pages/ListPage.tsx";
 import CategoryPage from "./pages/CategoryPage.tsx";
 import SubcategoryPage from "./pages/SubcategoryPage.tsx";
+import Notifications from "./pages/Notifications.tsx";
 import { DeviceFrame } from "./components/DeviceFrame.tsx";
 import { ConstructionAgentFAB } from "./components/ConstructionAgentFAB.tsx";
+import { useOrderNotifications } from "@/hooks/useOrderNotifications";
 
 const queryClient = new QueryClient();
+
+/**
+ * Lives inside BrowserRouter so the realtime hook can call useNavigate
+ * when the user taps a top-of-screen toast. Renders nothing.
+ */
+const RealtimeNotificationsBridge = () => {
+  useOrderNotifications();
+  return null;
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Sonner />
+      <Sonner
+        position="top-center"
+        toastOptions={{
+          // Make Sonner's default container lift the iOS-style custom toast
+          // above the status bar / notch on real devices.
+          style: { marginTop: "env(safe-area-inset-top, 0px)" },
+        }}
+      />
       <BrowserRouter>
         <DeviceFrame>
           {/* phone-shell is `relative` (see index.css) — mounting the
@@ -29,6 +47,7 @@ const App = () => (
               outer browser window. */}
           <div className="phone-shell shadow-rugged">
             <Toaster />
+            <RealtimeNotificationsBridge />
             <Routes>
               <Route path="/" element={<OrderSearch />} />
               <Route path="/sites" element={<Index />} />
@@ -38,6 +57,7 @@ const App = () => (
               <Route path="/cart" element={<Cart />} />
               <Route path="/status" element={<OrderStatusScreen />} />
               <Route path="/order/status" element={<OrderOverview />} />
+              <Route path="/notifications" element={<Notifications />} />
               <Route path="/reorder" element={<ListPage mode="reorder" />} />
               <Route path="/favorites" element={<ListPage mode="favorites" />} />
               <Route path="/category/:categorySlug" element={<CategoryPage />} />
