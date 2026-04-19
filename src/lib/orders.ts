@@ -118,6 +118,28 @@ export async function getProjectMinApproval(projectId: string): Promise<number> 
 export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
   const status: DbOrderStatus = input.status ?? "requested";
 
+  // Guard 0a — empty cart must never reach the DB.
+  if (!input.lines || input.lines.length === 0) {
+    const err = new Error("Cannot create an order with an empty cart.");
+    console.error("[orders] createOrder aborted — empty cart", { projectId: input.projectId });
+    throw err;
+  }
+
+  // Guard 0b — every line must be linkable to normalized_products.
+  // We refuse to create a "ghost" order header if no line survives the UUID
+  // filter, instead of inserting a header with zero order_items.
+  const linesToInsert = input.lines.filter((l) => isUuid(l.product.id) && l.qty > 0);
+  if (linesToInsert.length === 0) {
+    const err = new Error(
+      "No cart lines reference a known product. Add items from the catalog and try again.",
+    );
+    console.error("[orders] createOrder aborted — no linkable lines", {
+      projectId: input.projectId,
+      submittedCount: input.lines.length,
+    });
+    throw err;
+  }
+
   // Phase 1 — insert order header.
   const orderPayload = {
     status,
@@ -154,7 +176,6 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
   // the insert fails with PGRST204 ("Could not find the X column ... in the
   // schema cache") — we then retry with the minimal legacy schema so the app
   // keeps working until the migration is applied.
-  const linesToInsert = input.lines.filter((l) => isUuid(l.product.id) && l.qty > 0);
   const fullRows = linesToInsert.map((l) => ({
     order_id: created.id,
     product_id: l.product.id,
@@ -171,54 +192,79 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
   }));
 
   console.info("[orders] → POST order_items", {
+    order_id: created.id,
     count: fullRows.length,
-    skipped: input.lines.length - fullRows.length,
     rows: fullRows,
   });
 
-  const tryInsertItems = async () => {
-    if (fullRows.length === 0) return;
-    let { error: itemsErr } = await supabase.from("order_items").insert(fullRows);
-
-    // Schema-cache miss for snapshot columns → retry without them.
-    if (
-      itemsErr &&
-      itemsErr.code === "PGRST204" &&
-      /product_name|unit/i.test(itemsErr.message ?? "")
-    ) {
-      console.warn(
-        "[orders] order_items snapshot columns missing — falling back to legacy insert. " +
-          "Run db/migrations/2026-04-18_orders_audit.sql to enable snapshots.",
-        { message: itemsErr.message }
-      );
-      ({ error: itemsErr } = await supabase.from("order_items").insert(legacyRows));
-    }
-
-    if (itemsErr) {
-      console.error("[orders] order_items insert failed — rolling back order", {
+  const rollbackHeader = async (reason: string) => {
+    console.error("[orders] rolling back order header", { order_id: created.id, reason });
+    const { error: rollbackErr } = await supabase
+      .from("orders")
+      .delete()
+      .eq("id", created.id);
+    if (rollbackErr) {
+      console.error("[orders] ROLLBACK FAILED — orphan order header left in DB", {
         order_id: created.id,
-        code: itemsErr.code,
-        message: itemsErr.message,
-        details: itemsErr.details,
-        hint: itemsErr.hint,
+        code: rollbackErr.code,
+        message: rollbackErr.message,
       });
-      const { error: rollbackErr } = await supabase
-        .from("orders")
-        .delete()
-        .eq("id", created.id);
-      if (rollbackErr) {
-        console.error("[orders] ROLLBACK FAILED — orphan order header left in DB", {
-          order_id: created.id,
-          code: rollbackErr.code,
-          message: rollbackErr.message,
-        });
-      }
-      throw itemsErr;
     }
-    console.info("[orders] ← order_items insert ok", { count: fullRows.length });
   };
 
-  await tryInsertItems();
+  let { error: itemsErr, data: insertedItems } = await supabase
+    .from("order_items")
+    .insert(fullRows)
+    .select("id");
+
+  // Schema-cache miss for snapshot columns → retry without them.
+  if (
+    itemsErr &&
+    itemsErr.code === "PGRST204" &&
+    /product_name|unit/i.test(itemsErr.message ?? "")
+  ) {
+    console.warn(
+      "[orders] order_items snapshot columns missing — falling back to legacy insert. " +
+        "Run db/migrations/2026-04-18_orders_audit.sql to enable snapshots.",
+      { message: itemsErr.message },
+    );
+    ({ error: itemsErr, data: insertedItems } = await supabase
+      .from("order_items")
+      .insert(legacyRows)
+      .select("id"));
+  }
+
+  if (itemsErr) {
+    console.error("[orders] order_items insert failed — rolling back order", {
+      order_id: created.id,
+      code: itemsErr.code,
+      message: itemsErr.message,
+      details: itemsErr.details,
+      hint: itemsErr.hint,
+    });
+    await rollbackHeader("order_items insert error");
+    throw itemsErr;
+  }
+
+  // Defensive: insert reported success but returned 0 rows (RLS strip, etc.) —
+  // treat as failure and roll back so the UI never shows an empty order.
+  const insertedCount = (insertedItems ?? []).length;
+  if (insertedCount !== fullRows.length) {
+    console.error("[orders] order_items insert returned wrong row count — rolling back", {
+      order_id: created.id,
+      expected: fullRows.length,
+      got: insertedCount,
+    });
+    await rollbackHeader("order_items row count mismatch");
+    throw new Error(
+      `Order items partially saved (${insertedCount}/${fullRows.length}). Order was rolled back.`,
+    );
+  }
+
+  console.info("[orders] ← order_items insert ok", {
+    order_id: created.id,
+    count: insertedCount,
+  });
 
   return created;
 }
