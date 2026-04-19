@@ -102,7 +102,7 @@ const blobToBase64 = (blob: Blob): Promise<string> =>
 export const useWhisperVoiceInput = ({
   lang = "de",
   onFinal,
-  silenceMs = 1500,
+  silenceMs = 900,
   maxRecordingMs = 30_000,
 }: UseWhisperVoiceInputOptions = {}) => {
   // After a Whisper failure, fall back to native Web Speech for a SHORT
@@ -167,7 +167,44 @@ export const useWhisperVoiceInput = ({
   const onFinalRef = useRef(onFinal);
   onFinalRef.current = onFinal;
 
+  // The mic stream is warmed once and reused. getUserMedia takes 200-800 ms
+  // (permission check + device open) on every cold start — keeping the
+  // stream alive between recordings makes subsequent taps feel instant.
+  const warmStreamRef = useRef<MediaStream | null>(null);
+  const warmingRef = useRef<Promise<MediaStream | null> | null>(null);
+
+  const acquireStream = useCallback(async (): Promise<MediaStream | null> => {
+    const existing = warmStreamRef.current;
+    if (existing && existing.getAudioTracks().some((t) => t.readyState === "live")) {
+      return existing;
+    }
+    if (warmingRef.current) return warmingRef.current;
+    const p = navigator.mediaDevices
+      .getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
+      .then((s) => {
+        warmStreamRef.current = s;
+        return s;
+      })
+      .catch((e) => {
+        console.error("[useWhisperVoiceInput] getUserMedia failed", e);
+        return null;
+      })
+      .finally(() => {
+        warmingRef.current = null;
+      });
+    warmingRef.current = p;
+    return p;
+  }, []);
+
   // Single source of truth for cleanup. Always safe to call.
+  // Note: the warm mic stream is intentionally kept alive so the next
+  // recording starts instantly. It is released only on unmount.
   const cleanup = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
@@ -193,7 +230,7 @@ export const useWhisperVoiceInput = ({
       });
     }
     audioCtxRef.current = null;
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    // streamRef is just an alias to warmStreamRef now — do NOT stop tracks.
     streamRef.current = null;
   }, []);
 
@@ -237,19 +274,9 @@ export const useWhisperVoiceInput = ({
     hasSpokenRef.current = false;
     stoppingRef.current = false;
 
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // Browser-side noise tricks help Whisper a lot on construction sites.
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Microphone permission denied";
-      setError(msg);
+    const stream = await acquireStream();
+    if (!stream) {
+      setError("Microphone permission denied");
       setInterim("");
       return;
     }
@@ -398,7 +425,9 @@ export const useWhisperVoiceInput = ({
     }, maxRecordingMs);
 
     try {
-      recorder.start(250); // collect chunks every 250 ms
+      // No timeslice → recorder fires a single ondataavailable on stop,
+      // minimising overhead and giving the smallest possible blob.
+      recorder.start();
       setListening(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not start recording";
@@ -406,9 +435,9 @@ export const useWhisperVoiceInput = ({
       setInterim("");
       cleanup();
     }
-  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stopWhisper, native]);
+  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stopWhisper, native, acquireStream]);
 
-  // Cleanup on unmount.
+  // Cleanup on unmount: stop the recorder and release the warm mic stream.
   useEffect(
     () => () => {
       stoppingRef.current = true;
@@ -418,6 +447,8 @@ export const useWhisperVoiceInput = ({
         /* noop */
       }
       cleanup();
+      warmStreamRef.current?.getTracks().forEach((t) => t.stop());
+      warmStreamRef.current = null;
     },
     [cleanup],
   );
@@ -446,5 +477,13 @@ export const useWhisperVoiceInput = ({
     stopWhisper();
   }, [useFallback, whisperSupported, native, stopWhisper]);
 
-  return { supported, listening, interim, error, start, stop, speak };
+  // Pre-warm the mic stream from a user gesture (e.g. pointerdown on the
+  // mic button) so the actual click->record path is instant. Safe to call
+  // multiple times — it short-circuits if the stream is already live.
+  const prewarm = useCallback(() => {
+    if (useFallback || !whisperSupported) return;
+    void acquireStream();
+  }, [useFallback, whisperSupported, acquireStream]);
+
+  return { supported, listening, interim, error, start, stop, speak, prewarm };
 };
