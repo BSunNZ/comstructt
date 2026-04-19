@@ -141,7 +141,7 @@ const Cart = () => {
       <TopBar
         title="Your Cart"
         subtitle={`${cart.length} item${cart.length === 1 ? "" : "s"}`}
-        back="/order/trade"
+        back="/order/search"
         right={
           <button
             type="button"
