@@ -13,8 +13,11 @@ export type RecentOrderedProduct = {
 type Row = {
   quantity: number | null;
   unit_price: number | null;
-  product_name: string | null;
-  unit: string | null;
+  // Snapshot columns on order_items only exist if those migrations have
+  // been applied. Both are optional — we always fall back to the joined
+  // normalized_products row.
+  product_name?: string | null;
+  unit?: string | null;
   supplier_name?: string | null;
   created_at: string;
   product_id: string | null;
