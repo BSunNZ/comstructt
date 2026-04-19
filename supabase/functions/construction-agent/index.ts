@@ -16,12 +16,9 @@
  *
  * Deploy trigger: 2026-04-19T12:48 — force redeploy after merging search/sync (v3).
  */
-// @ts-expect-error Deno std import resolved at edge runtime
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-// @ts-expect-error npm: specifier resolved at edge runtime
 import OpenAI from "npm:openai@4.73.0";
-// @ts-expect-error esm.sh import resolved at edge runtime
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2.103.3";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -109,11 +106,8 @@ serve(async (req: Request) => {
   console.log(`[construction-agent] build=${BUILD_VERSION} method=${req.method}`);
 
   try {
-    // @ts-expect-error Deno global at edge runtime
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    // @ts-expect-error Deno global at edge runtime
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    // @ts-expect-error Deno global at edge runtime
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!OPENAI_API_KEY) return jsonError(500, "OPENAI_API_KEY is not configured");

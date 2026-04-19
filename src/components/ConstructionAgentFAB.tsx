@@ -84,8 +84,7 @@ export function ConstructionAgentFAB() {
     try {
       // Use the dedicated `search` action which runs pure semantic search
       // (no LLM loop) and returns { kits: [...] } already scaled by area.
-      // Falls back transparently to the chat action for older deploys.
-      const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
+      const searchResponse = await supabase.functions.invoke("construction-agent", {
         body: {
           action: "search",
           query: q,
@@ -96,27 +95,39 @@ export function ConstructionAgentFAB() {
         },
       });
       if (id !== reqIdRef.current) return; // stale
-      if (fnError) throw fnError;
-      // If the deployed edge function still rejects the search action,
-      // fall back to the legacy chat shape transparently.
-      let kits = parseKitResults(data, q);
-      if (
-        kits.length === 0 &&
-        data &&
-        typeof data === "object" &&
-        "error" in (data as Record<string, unknown>)
-      ) {
+
+      let kits: KitResult[] = [];
+
+      if (searchResponse.error) {
+        console.warn("[ConstructionAgentFAB] search action unavailable, trying legacy fallback", searchResponse.error);
         const userContent = areaM2 && areaM2 > 0 ? `${q} (${areaM2} m²)` : q;
         const fallback = await supabase.functions.invoke("construction-agent", {
           body: { projectId, messages: [{ role: "user", content: userContent }] },
         });
+        if (id !== reqIdRef.current) return;
         if (fallback.error) throw fallback.error;
         kits = parseKitResults(fallback.data, q);
-      }
-      // Surface helpful debug info if the backend returned it.
-      if (data && typeof data === "object" && "debug" in (data as Record<string, unknown>)) {
-        // eslint-disable-next-line no-console
-        console.log("[ConstructionAgentFAB] backend debug=", (data as { debug: unknown }).debug);
+      } else {
+        const { data } = searchResponse;
+        kits = parseKitResults(data, q);
+        if (
+          kits.length === 0 &&
+          data &&
+          typeof data === "object" &&
+          "error" in (data as Record<string, unknown>)
+        ) {
+          const userContent = areaM2 && areaM2 > 0 ? `${q} (${areaM2} m²)` : q;
+          const fallback = await supabase.functions.invoke("construction-agent", {
+            body: { projectId, messages: [{ role: "user", content: userContent }] },
+          });
+          if (id !== reqIdRef.current) return;
+          if (fallback.error) throw fallback.error;
+          kits = parseKitResults(fallback.data, q);
+        }
+        if (data && typeof data === "object" && "debug" in (data as Record<string, unknown>)) {
+          // eslint-disable-next-line no-console
+          console.log("[ConstructionAgentFAB] backend debug=", (data as { debug: unknown }).debug);
+        }
       }
       setResults(kits);
       setHasSearched(true);
