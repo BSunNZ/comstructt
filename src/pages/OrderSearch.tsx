@@ -766,7 +766,7 @@ const OrderSearch = () => {
         style={{
           bottom: "var(--ios-kb-h, 0px)",
           paddingBottom:
-            "calc((1 - var(--ios-kb-open, 0)) * max(env(safe-area-inset-bottom), 1.5rem))",
+            "calc((1 - var(--ios-kb-open, 0)) * max(env(safe-area-inset-bottom), 1.5rem) + var(--ios-kb-open, 0) * 10px)",
         }}
       >
         <button
