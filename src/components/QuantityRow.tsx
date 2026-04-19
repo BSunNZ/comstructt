@@ -54,7 +54,17 @@ export const QuantityRow = ({ line, onChange, onRemove }: Props) => {
           {product.sku} · {product.unit}
         </p>
         {product.price > 0 ? (
-          <p className="mt-1 font-display text-lg text-foreground">€{(product.price * qty).toFixed(2)}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="font-display text-lg text-foreground">€{(product.price * qty).toFixed(2)}</p>
+            {product.priceSource === "project" && (
+              <span
+                className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary ring-1 ring-primary/30"
+                title="Projekt-spezifischer Sonderpreis"
+              >
+                Projektpreis
+              </span>
+            )}
+          </div>
         ) : (
           <p className="mt-1 text-sm font-semibold text-muted-foreground">Preis auf Anfrage</p>
         )}
