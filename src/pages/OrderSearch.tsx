@@ -445,7 +445,7 @@ const OrderSearch = () => {
             <input
               value={listening && interim ? interim : q}
               onChange={(e) => onTypeChange(e.target.value)}
-              placeholder={listening ? "Höre zu…" : "Material suchen"}
+              placeholder={listening ? "Höre zu…" : "Kauf..."}
               aria-label="Search materials"
               className={`block h-32 w-full border-2 bg-card pl-20 pr-32 text-lg shadow-rugged outline-none placeholder:text-muted-foreground placeholder:transition-opacity focus:placeholder:opacity-0 focus:border-primary rounded-full opacity-100 font-normal text-left font-sans ${
                 listening ? "border-primary" : "border-border"
