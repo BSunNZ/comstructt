@@ -368,6 +368,21 @@ function parseArea(input: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function mapAssistantError(message: string): string {
+  const m = message.toLowerCase();
+  if (
+    m.includes("api connection error") ||
+    m.includes("openai_api_key") ||
+    m.includes("service role") ||
+    m.includes("openai embedding request failed") ||
+    m.includes("missing messages") ||
+    m.includes("failed to fetch")
+  ) {
+    return "API Connection Error";
+  }
+  return "Suche fehlgeschlagen";
+}
+
 /**
  * Accepts both response shapes:
  *   1. { kits: [...] }                — new search action (when deployed).
