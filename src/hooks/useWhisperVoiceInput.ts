@@ -425,7 +425,9 @@ export const useWhisperVoiceInput = ({
     }, maxRecordingMs);
 
     try {
-      recorder.start(250); // collect chunks every 250 ms
+      // No timeslice → recorder fires a single ondataavailable on stop,
+      // minimising overhead and giving the smallest possible blob.
+      recorder.start();
       setListening(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not start recording";
@@ -433,9 +435,9 @@ export const useWhisperVoiceInput = ({
       setInterim("");
       cleanup();
     }
-  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stopWhisper, native]);
+  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stopWhisper, native, acquireStream]);
 
-  // Cleanup on unmount.
+  // Cleanup on unmount: stop the recorder and release the warm mic stream.
   useEffect(
     () => () => {
       stoppingRef.current = true;
@@ -445,6 +447,8 @@ export const useWhisperVoiceInput = ({
         /* noop */
       }
       cleanup();
+      warmStreamRef.current?.getTracks().forEach((t) => t.stop());
+      warmStreamRef.current = null;
     },
     [cleanup],
   );
