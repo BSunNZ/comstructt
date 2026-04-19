@@ -756,6 +756,14 @@ const OrderSearch = () => {
             )}
           </section>
         )}
+
+        {/* Browse by category — 2×3 grid + "Sonstiges" CTA. Hidden while
+            the user is actively searching so results stay the focus. */}
+        {q.trim().length < 2 && (
+          <div className="mt-6">
+            <CategoryGrid />
+          </div>
+        )}
       </main>
 
       {/* Fixed cart CTA — pinned to the bottom of the viewport (or the phone
