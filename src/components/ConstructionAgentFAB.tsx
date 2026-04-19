@@ -16,8 +16,9 @@
  * `<ConstructionAgentFAB />` mount in `src/App.tsx` to remove the feature.
  */
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Search, Loader2, X, RefreshCw, Plus, Package } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { useLocation } from "react-router-dom";
+import { Sparkles, Loader2, X, RefreshCw, Plus, Package, ArrowUp, HardHat } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
@@ -36,10 +37,20 @@ type KitResult = {
   unmatched: string[];
 };
 
+type ChatMessage =
+  | { id: string; role: "user"; text: string; ts: number }
+  | { id: string; role: "assistant"; ts: number; busy?: boolean; error?: string | null; kits?: KitResult[]; query?: string };
+
 const SEARCH_DEBOUNCE_MS = 350;
 const SEARCH_MATCH_THRESHOLD = 0.2;
 
+const formatTime = (ts: number) =>
+  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 export function ConstructionAgentFAB() {
+  const location = useLocation();
+  const isHomePage = location.pathname === "/";
+
   const projectId = useApp((s) => s.projectId);
   const addToCart = useApp((s) => s.addToCart);
 
@@ -52,9 +63,23 @@ export function ConstructionAgentFAB() {
   const [hasSearched, setHasSearched] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const reqIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const lastSubmittedRef = useRef<string>("");
+
+  // If we navigate away from home while the panel is open, close + unmount.
+  useEffect(() => {
+    if (!isHomePage && open) setOpen(false);
+  }, [isHomePage, open]);
+
+  // Auto-scroll to bottom when messages change.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, busy]);
 
   // Debounced auto-search whenever the query (or m²) changes.
   useEffect(() => {
