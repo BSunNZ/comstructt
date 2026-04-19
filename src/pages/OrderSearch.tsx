@@ -343,6 +343,7 @@ const OrderSearch = () => {
     error: voiceError,
     start: startVoice,
     stop: stopVoice,
+    prewarm: prewarmVoice,
   } = useVoiceInput({
     lang: "de",
     onFinal: handleVoiceFinal,
