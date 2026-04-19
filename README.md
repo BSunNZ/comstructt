@@ -1,19 +1,21 @@
 # Comstruct
 
-Comstruct is a full-stack starter for a web application plus backend API focused on CSV uploads and data processing.
+Comstruct now includes a procurement-first MVP for importing supplier CSVs into a curated C-material catalog.
 
 ## Stack
 
 - React + Vite + TypeScript frontend in `apps/web`
 - Express + TypeScript backend in `apps/api`
-- Shared TypeScript types in `packages/shared`
+- Shared runtime types in `packages/shared`
+- Supabase as the database backend
 
-## What is included
+## Included in this slice
 
-- CSV upload UI
-- API endpoint for multipart CSV upload
-- CSV parsing with a row preview response
-- Shared upload result types between frontend and backend
+- Procurement workspace with `Imports` and `Catalog`
+- CSV upload for `sample.csv`
+- Mapping preview before import confirmation
+- Supabase-backed draft imports, raw rows, normalized products, and supplier mappings
+- Catalog cleanup UI for names, categories, price, C-material flag, and publication status
 
 ## Getting started
 
@@ -23,13 +25,22 @@ Comstruct is a full-stack starter for a web application plus backend API focused
    npm install
    ```
 
-2. Start both apps:
+2. Copy the API env template and fill in your Supabase credentials:
+
+   ```bash
+   copy apps\api\.env.example apps\api\.env
+   ```
+
+3. Apply all SQL files in `supabase/migrations` to your Supabase database in filename order.
+   `20260418_procurement_catalog_cleanup.sql` bootstraps the catalog schema, and `20260418_add_procurement_orders.sql` is required for the Orders workspace.
+
+4. Start both apps:
 
    ```bash
    npm run dev
    ```
 
-3. Open:
+5. Open:
    - Frontend: `http://localhost:5173`
    - API: `http://localhost:4000`
 
@@ -41,13 +52,6 @@ apps/
   web/
 packages/
   shared/
+supabase/
+  migrations/
 ```
-
-## Next build steps
-
-- Add persistent storage for uploaded files and parsed records
-- Add authentication and user accounts
-- Add validation rules for CSV schemas
-- Add background processing for large uploads
-- Add tests and CI
-
