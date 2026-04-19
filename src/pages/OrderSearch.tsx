@@ -755,7 +755,13 @@ const OrderSearch = () => {
       {/* Fixed cart CTA — pinned to the bottom of the viewport (or the phone
           screen on desktop, since DeviceFrame creates a containing block via
           translateZ). Stays put while the product list scrolls underneath. */}
-      <div className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-[430px] border-t border-border bg-background/95 px-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <div
+        className="fixed inset-x-0 z-50 mx-auto w-full max-w-[430px] border-t border-border bg-background/95 px-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 transition-[bottom] duration-200"
+        // When the fake iOS keyboard is open inside DeviceFrame it sets
+        // --ios-kb-h on the screen container; lifting the cart bar by that
+        // amount keeps it visible above the keyboard during the demo.
+        style={{ bottom: "var(--ios-kb-h, 0px)" }}
+      >
         <button
           onClick={() => nav("/cart")}
           disabled={cartCount === 0}
