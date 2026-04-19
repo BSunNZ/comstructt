@@ -10,6 +10,8 @@ import Cart from "./pages/Cart.tsx";
 import OrderStatusScreen from "./pages/OrderStatusScreen.tsx";
 import OrderOverview from "./pages/OrderOverview.tsx";
 import ListPage from "./pages/ListPage.tsx";
+import CategoryPage from "./pages/CategoryPage.tsx";
+import SubcategoryPage from "./pages/SubcategoryPage.tsx";
 import { DeviceFrame } from "./components/DeviceFrame.tsx";
 import { ConstructionAgentFAB } from "./components/ConstructionAgentFAB.tsx";
 
@@ -38,6 +40,8 @@ const App = () => (
               <Route path="/order/status" element={<OrderOverview />} />
               <Route path="/reorder" element={<ListPage mode="reorder" />} />
               <Route path="/favorites" element={<ListPage mode="favorites" />} />
+              <Route path="/category/:categorySlug" element={<CategoryPage />} />
+              <Route path="/category/:categorySlug/:subcategory" element={<SubcategoryPage />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
