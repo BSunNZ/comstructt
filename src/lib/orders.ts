@@ -144,6 +144,18 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     throw err;
   }
 
+  // Compute the order total upfront from the cart so the header carries
+  // the correct value the moment it lands in the DB. The
+  // `tg_order_items_recalc` trigger overwrites this on every order_items
+  // insert/update/delete to keep it authoritative — so this initial value
+  // is just a defensive starting point that matches what the user saw
+  // in the cart at checkout time.
+  const submittedTotal = linesToInsert.reduce((sum, l) => {
+    const price = Number(l.product.price) || 0;
+    const qty = Math.max(0, Number(l.qty) || 0);
+    return sum + (price > 0 ? price * qty : 0);
+  }, 0);
+
   // Phase 1 — insert order header.
   const orderPayload = {
     status,
@@ -152,6 +164,7 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     site_name: input.siteName ?? null,
     ordered_by: input.orderedBy ?? null,
     notes: input.notes ?? null,
+    total_price: submittedTotal,
   };
   // QA: log the exact payload sent to Supabase.
   console.info("[orders] → POST orders", orderPayload);
