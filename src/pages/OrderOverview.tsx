@@ -117,6 +117,7 @@ const OrderOverview = () => {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<DbOrder | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<DbOrder | null>(null);
 
   const refresh = async (alive: () => boolean = () => true) => {
     try {
