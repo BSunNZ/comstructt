@@ -167,7 +167,44 @@ export const useWhisperVoiceInput = ({
   const onFinalRef = useRef(onFinal);
   onFinalRef.current = onFinal;
 
+  // The mic stream is warmed once and reused. getUserMedia takes 200-800 ms
+  // (permission check + device open) on every cold start — keeping the
+  // stream alive between recordings makes subsequent taps feel instant.
+  const warmStreamRef = useRef<MediaStream | null>(null);
+  const warmingRef = useRef<Promise<MediaStream | null> | null>(null);
+
+  const acquireStream = useCallback(async (): Promise<MediaStream | null> => {
+    const existing = warmStreamRef.current;
+    if (existing && existing.getAudioTracks().some((t) => t.readyState === "live")) {
+      return existing;
+    }
+    if (warmingRef.current) return warmingRef.current;
+    const p = navigator.mediaDevices
+      .getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
+      .then((s) => {
+        warmStreamRef.current = s;
+        return s;
+      })
+      .catch((e) => {
+        console.error("[useWhisperVoiceInput] getUserMedia failed", e);
+        return null;
+      })
+      .finally(() => {
+        warmingRef.current = null;
+      });
+    warmingRef.current = p;
+    return p;
+  }, []);
+
   // Single source of truth for cleanup. Always safe to call.
+  // Note: the warm mic stream is intentionally kept alive so the next
+  // recording starts instantly. It is released only on unmount.
   const cleanup = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
@@ -193,7 +230,7 @@ export const useWhisperVoiceInput = ({
       });
     }
     audioCtxRef.current = null;
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    // streamRef is just an alias to warmStreamRef now — do NOT stop tracks.
     streamRef.current = null;
   }, []);
 
