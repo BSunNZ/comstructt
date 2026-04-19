@@ -43,18 +43,28 @@ export type DbOrderItem = {
   // catalog edits / product deletion.
   product_name: string | null;
   unit: string | null;
+  // Supplier name resolved at checkout from supplier_product_mapping →
+  // suppliers.name. Snapshotted so historical orders show the actual
+  // supplier even if the mapping changes later.
+  supplier_name: string | null;
   quantity: number;
   unit_price: number | null;
   // Stored generated column = quantity * unit_price. Read-only from the app.
   line_total: number | null;
   created_at: string;
-  // Joined when select includes normalized_products(*)
+  // Joined when select includes normalized_products(*, supplier_product_mapping(...))
   normalized_products?: {
     id: string;
     product_name: string | null;
     family_name: string | null;
     category: string | null;
     unit: string | null;
+    supplier_product_mapping?: Array<{
+      contract_price: number | null;
+      project_prices: Record<string, number | string | null> | null;
+      supplier_id: string | null;
+      suppliers?: { name: string | null } | null;
+    }> | null;
   } | null;
 };
 
