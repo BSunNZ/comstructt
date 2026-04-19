@@ -227,15 +227,17 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     .insert(fullRows)
     .select("id");
 
-  // Schema-cache miss for snapshot columns → retry without them.
+  // Schema-cache miss for snapshot/audit columns → retry without them.
+  // Covers product_name/unit (2026-04-18 migration) and price_source/project_id
+  // (2026-04-19 project-pricing migration).
   if (
     itemsErr &&
     itemsErr.code === "PGRST204" &&
-    /product_name|unit/i.test(itemsErr.message ?? "")
+    /product_name|unit|price_source|project_id/i.test(itemsErr.message ?? "")
   ) {
     console.warn(
-      "[orders] order_items snapshot columns missing — falling back to legacy insert. " +
-        "Run db/migrations/2026-04-18_orders_audit.sql to enable snapshots.",
+      "[orders] order_items audit columns missing — falling back to legacy insert. " +
+        "Run db/migrations/2026-04-18_orders_audit.sql and 2026-04-19_order_items_pricing.sql.",
       { message: itemsErr.message },
     );
     ({ error: itemsErr, data: insertedItems } = await supabase
