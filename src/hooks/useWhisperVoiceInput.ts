@@ -102,7 +102,7 @@ const blobToBase64 = (blob: Blob): Promise<string> =>
 export const useWhisperVoiceInput = ({
   lang = "de",
   onFinal,
-  silenceMs = 1500,
+  silenceMs = 900,
   maxRecordingMs = 30_000,
 }: UseWhisperVoiceInputOptions = {}) => {
   // After a Whisper failure, fall back to native Web Speech for a SHORT
