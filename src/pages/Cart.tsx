@@ -36,7 +36,7 @@ const Cart = () => {
   // while we're submitting (clearCart fires before nav("/order/status")).
   useEffect(() => {
     if (cart.length === 0 && !submitting) {
-      nav("/order/trade", { replace: true });
+      nav(-1);
     }
   }, [cart.length, submitting, nav]);
 
