@@ -20,8 +20,10 @@ import { OrderInfoPopover } from "@/components/OrderInfoPopover";
 import { ProductDetailDropdown } from "@/components/ProductDetailDropdown";
 
 // Map a Supabase normalized_products row into the local Product shape used by the cart.
-// Price is sourced from supplier_product_mapping (lowest active). 0 means
-// "no price available" → UI renders "Preis auf Anfrage".
+// Price is sourced from supplier_product_mapping. When a project context is
+// active, project-specific overrides (project_prices jsonb) win over the
+// supplier's contract_price — see `pickBestPrice`. 0 means "no price
+// available" → UI renders "Preis auf Anfrage".
 const toProduct = (r: DbProduct): Product => ({
   id: String(r.id),
   name: r.product_name ?? r.family_name ?? "Unbenanntes Produkt",
@@ -30,6 +32,7 @@ const toProduct = (r: DbProduct): Product => ({
   price: typeof r.price === "number" && r.price > 0 ? r.price : 0,
   category: r.category ?? "Allgemein",
   subcategory: r.subcategory ?? null,
+  priceSource: r.priceSource ?? undefined,
 });
 
 const OrderSearch = () => {
