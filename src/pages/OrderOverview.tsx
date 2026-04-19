@@ -202,6 +202,8 @@ const OrderOverview = () => {
       setUpdatingId(null);
     }
   };
+
+  const grouped = useMemo(() => {
     const out: Record<SectionKey, DbOrder[]> = { Requested: [], Ordered: [], Delivered: [] };
     for (const o of orders) {
       const norm = normalizeStatus(o.status);
