@@ -292,10 +292,32 @@ export const useWhisperVoiceInput = ({
         setInterim("");
         if (text) onFinalRef.current?.(text);
       } catch (e) {
-        console.error("[useWhisperVoiceInput] transcription failed", e);
-        const msg = e instanceof Error ? e.message : "Transcription failed";
-        setError(msg);
+        console.error("[useWhisperVoiceInput] transcription failed — falling back to Web Speech API", e);
         setInterim("");
+        // Permanently flip to the native Web Speech recognizer for the rest
+        // of this session so the demo keeps working without retrying a
+        // broken edge function on every utterance.
+        if (hasWebSpeechApi() && native.supported) {
+          try {
+            window.sessionStorage.setItem("voice:useNativeFallback", "1");
+          } catch {
+            /* sessionStorage unavailable — fine, we'll just keep the in-memory flag */
+          }
+          setUseFallback(true);
+          setError(null);
+          // Immediately re-engage the mic so the user doesn't have to tap
+          // again. Web Speech requires a fresh user gesture in some
+          // browsers; we attempt anyway because we're still inside the
+          // gesture-initiated promise chain.
+          try {
+            native.start();
+          } catch {
+            /* user can tap mic again */
+          }
+        } else {
+          const msg = e instanceof Error ? e.message : "Transcription failed";
+          setError(msg);
+        }
       }
     };
 
