@@ -210,18 +210,27 @@ const OrderOverview = () => {
     }
   };
 
-  // Single unified list. Sort by section priority (Requested first, then
-  // Ordered, Delivered, Rejected) and within each section by newest first
-  // — keeps the most actionable orders at the top now that the tab bar
-  // is gone.
-  const orderedList = useMemo(() => {
-    const priority = (o: DbOrder) => SECTION_ORDER.indexOf(sectionForStatus(o.status));
-    return [...orders].sort((a, b) => {
-      const dp = priority(a) - priority(b);
-      if (dp !== 0) return dp;
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
+  // Group orders by their visual section so we can render section headers
+  // above each cluster. Sections with zero orders are omitted entirely so
+  // the page stays clean (e.g. no empty "Rejected" header when nothing was
+  // declined). Within a section, newest orders surface first.
+  const grouped = useMemo(() => {
+    const out: Record<SectionKey, DbOrder[]> = {
+      Requested: [],
+      Ordered: [],
+      Delivered: [],
+      Rejected: [],
+    };
+    for (const o of orders) out[sectionForStatus(o.status)].push(o);
+    for (const k of SECTION_ORDER) {
+      out[k].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+    }
+    return out;
   }, [orders]);
+
+  const visibleSections = SECTION_ORDER.filter((k) => grouped[k].length > 0);
 
   return (
     <div className="min-h-screen bg-background pb-10">
