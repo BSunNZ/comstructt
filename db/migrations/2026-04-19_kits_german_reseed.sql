@@ -55,7 +55,7 @@ on conflict (slug) do nothing;
 --      - "Betontrennscheibe"
 with k as (select id, slug from public.kits)
 insert into public.kit_items (kit_id, product_id, product_name, unit, per_m2, base_qty, display_order)
-select k.id, t.product_id, t.product_name, t.unit, t.per_m2, t.base_qty, t.ord
+select k.id, t.product_id, t.product_name, t.unit, t.per_m2::numeric, t.base_qty::numeric, t.ord::int
 from k
 join (values
   -- sanitaer-set: 1x silikon transparent + 1x silikon weiß + 1x spachtel
