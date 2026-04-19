@@ -190,10 +190,6 @@ const Cart = () => {
             their respective backends are wired up. */}
         <div className="mt-6 space-y-5">
           <CartRecommendations />
-          <CartApprovalCard
-            threshold={minApproval > 0 ? minApproval : 100}
-            needsApproval={needsApproval}
-          />
         </div>
       </main>
 
