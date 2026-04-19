@@ -268,7 +268,11 @@ export function ConstructionAgentFAB() {
 
             {!busy && !error && hasSearched && results.length === 0 && (
               <div className="rounded-xl bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
-                Kein passendes Kit gefunden. Versuche andere Begriffe.
+                <p className="font-medium text-foreground">Kein Treffer über Schwellenwert</p>
+                <p className="mt-1 text-xs">
+                  Kein Kit-Vektor matched über 30%. Versuche andere Begriffe oder klicke „Sync",
+                  falls du gerade Kits oder Keywords geändert hast.
+                </p>
               </div>
             )}
 
