@@ -66,9 +66,13 @@ export const QuantitySelector = ({
   const btnSizeCls = size === "lg" ? "h-14 w-14" : "h-12 w-12";
   const iconCls = size === "lg" ? "h-6 w-6" : "h-5 w-5";
   const fontCls = size === "lg" ? "text-2xl" : "text-lg";
+  // Cap overall width so a 4-digit qty (e.g. 1704×) can never push the row
+  // off-screen on narrow phones. Input stays flex-1 + min-w-0 → shrinks to
+  // fit whatever space remains while the −/+ buttons keep their size.
+  const maxWidthCls = size === "lg" ? "max-w-[220px]" : "max-w-[170px]";
 
   return (
-    <div className={`flex items-center gap-1 rounded-xl bg-secondary p-1`}>
+    <div className={`flex w-full ${maxWidthCls} shrink items-center gap-1 rounded-xl bg-secondary p-1`}>
       <button
         type="button"
         onClick={() => step(-1)}
