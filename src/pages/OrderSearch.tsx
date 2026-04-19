@@ -41,6 +41,13 @@ const OrderSearch = () => {
   const updateQty = useApp((s) => s.updateQty);
   const project = PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0];
 
+  // Recently ordered on THIS site — pulled live from Supabase. Replaces the
+  // old hardcoded LAST_ORDER demo array. Section is hidden when empty.
+  const { items: recentOrdered, loading: recentLoading } = useRecentOrderedProducts(
+    projectId,
+    6,
+  );
+
   const [q, setQ] = useState("");
   const [misuse, setMisuse] = useState<string | null>(null);
   // Only one product card's detail dropdown can be open at a time.
@@ -623,8 +630,9 @@ const OrderSearch = () => {
           </section>
         )}
 
-        {/* Last ordered on this site — 1-click reorder */}
-        {q.trim().length < 2 && (
+        {/* Last ordered on this site — 1-click reorder.
+            Hidden entirely when there is no order history yet. */}
+        {q.trim().length < 2 && (recentLoading || recentOrdered.length > 0) && (
           <section className="mt-6 space-y-3" aria-label="Recently ordered">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
@@ -635,47 +643,53 @@ const OrderSearch = () => {
               </Link>
             </div>
 
-            {LAST_ORDER.map((line) => {
-              const p = line.product;
-              const qty = qtyFor(p.id);
-              return (
-                <article
-                  key={p.id}
-                  className="flex items-center gap-3 rounded-2xl bg-card p-3 shadow-rugged ring-1 ring-border"
-                >
-                  <div className="grid h-14 w-14 shrink-0 place-items-center">
-                    <SubcategoryIcon
-                      subcategory={p.subcategory}
-                      category={p.category}
-                      className="h-12 w-12"
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 font-semibold leading-tight">{p.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      €{p.price.toFixed(2)} / {p.unit}
-                    </p>
-                  </div>
-                  {qty === 0 ? (
-                    <button
-                      onClick={() => addToCart(p, line.qty)}
-                      aria-label={`Reorder ${p.name}`}
-                      className="tap-target flex h-14 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5"
-                    >
-                      <Repeat className="h-5 w-5" />
-                      {line.qty}×
-                    </button>
-                  ) : (
-                    <QuantitySelector
-                      qty={qty}
-                      onChange={(n) => updateQty(p.id, n)}
-                      size="md"
-                      label={p.name}
-                    />
-                  )}
-                </article>
-              );
-            })}
+            {recentLoading && recentOrdered.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-2xl bg-card p-4 text-sm text-muted-foreground shadow-rugged ring-1 ring-border">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Lade letzte Bestellungen…
+              </div>
+            ) : (
+              recentOrdered.map(({ product: p, lastQty }) => {
+                const qty = qtyFor(p.id);
+                return (
+                  <article
+                    key={p.id}
+                    className="flex items-center gap-3 rounded-2xl bg-card p-3 shadow-rugged ring-1 ring-border"
+                  >
+                    <div className="grid h-14 w-14 shrink-0 place-items-center">
+                      <SubcategoryIcon
+                        subcategory={p.subcategory}
+                        category={p.category}
+                        className="h-12 w-12"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 font-semibold leading-tight">{p.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {p.price > 0 ? `€${p.price.toFixed(2)} / ${p.unit}` : `Preis auf Anfrage · ${p.unit}`}
+                      </p>
+                    </div>
+                    {qty === 0 ? (
+                      <button
+                        onClick={() => addToCart(p, lastQty)}
+                        aria-label={`Reorder ${p.name}`}
+                        className="tap-target flex h-14 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold uppercase tracking-wider text-primary-foreground shadow-press active:translate-y-0.5"
+                      >
+                        <Repeat className="h-5 w-5" />
+                        {lastQty}×
+                      </button>
+                    ) : (
+                      <QuantitySelector
+                        qty={qty}
+                        onChange={(n) => updateQty(p.id, n)}
+                        size="md"
+                        label={p.name}
+                      />
+                    )}
+                  </article>
+                );
+              })
+            )}
           </section>
         )}
       </main>
