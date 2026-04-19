@@ -49,6 +49,19 @@ const Cart = () => {
 
   const submit = async () => {
     if (cart.length === 0 || submitting) return;
+    if (linkableCount === 0) {
+      console.error("[cart] submit blocked — no linkable lines", {
+        cartCount: cart.length,
+        skippedCount,
+      });
+      toast({
+        title: "Keine Produkte verknüpfbar",
+        description:
+          "Diese Artikel stammen aus dem Demo-Katalog und können nicht bestellt werden. Bitte aus dem Produktkatalog hinzufügen.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSubmitting(true);
     const project = PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0];
     try {
@@ -152,7 +165,7 @@ const Cart = () => {
         </div>
         <button
           onClick={submit}
-          disabled={submitting}
+          disabled={submitting || linkableCount === 0}
           className="tap-target flex h-16 w-full items-center justify-center gap-2 rounded-2xl bg-primary text-lg font-bold uppercase tracking-wider text-primary-foreground shadow-rugged active:translate-y-0.5 active:shadow-press disabled:opacity-60"
         >
           {submitting ? (
