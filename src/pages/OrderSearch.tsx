@@ -432,25 +432,25 @@ const OrderSearch = () => {
             className="relative"
             role="search"
           >
-            <Search className="pointer-events-none absolute left-5 top-1/2 h-6 w-6 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-6 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground" />
             <input
               value={listening && interim ? interim : q}
               onChange={(e) => onTypeChange(e.target.value)}
               placeholder={listening ? "Höre zu…" : "Material suchen…"}
               aria-label="Search materials"
-              className={`block h-16 w-full rounded-2xl border-2 bg-card pl-14 pr-32 text-base font-medium shadow-rugged outline-none placeholder:text-muted-foreground focus:border-primary ${
+              className={`block h-32 w-full rounded-3xl border-2 bg-card pl-20 pr-44 text-2xl font-medium shadow-rugged outline-none placeholder:text-muted-foreground focus:border-primary ${
                 listening ? "border-primary" : "border-border"
               }`}
             />
-            <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+            <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2">
               {q && !listening && (
                 <button
                   type="button"
                   onClick={() => setQ("")}
                   aria-label="Clear search"
-                  className="grid h-10 w-10 place-items-center rounded-full text-muted-foreground active:bg-muted"
+                  className="grid h-14 w-14 place-items-center rounded-full text-muted-foreground active:bg-muted"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="h-7 w-7" />
                 </button>
               )}
               <button
@@ -459,21 +459,21 @@ const OrderSearch = () => {
                 aria-label={listening ? "Stop voice input" : "Start voice input"}
                 aria-pressed={listening}
                 title={voiceSupported ? "Voice input" : "Voice input not supported"}
-                className={`tap-target grid h-12 w-12 place-items-center rounded-xl transition active:translate-y-0.5 ${
+                className={`tap-target grid h-20 w-20 place-items-center rounded-2xl transition active:translate-y-0.5 ${
                   listening
                     ? "animate-pulse bg-primary text-primary-foreground shadow-press"
                     : "bg-secondary text-secondary-foreground active:bg-white/10"
                 } ${!voiceSupported ? "opacity-50" : ""}`}
               >
-                {listening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                {listening ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
               </button>
               <button
                 type="submit"
                 aria-label="Submit search"
                 disabled={q.trim().length === 0}
-                className="tap-target grid h-12 w-12 place-items-center rounded-xl bg-primary text-primary-foreground shadow-press active:translate-y-0.5 disabled:opacity-40"
+                className="tap-target grid h-20 w-20 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-press active:translate-y-0.5 disabled:opacity-40"
               >
-                <Send className="h-5 w-5" />
+                <Send className="h-8 w-8" />
               </button>
             </div>
           </form>
