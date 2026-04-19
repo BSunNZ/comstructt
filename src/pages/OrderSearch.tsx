@@ -431,74 +431,7 @@ const OrderSearch = () => {
           </span>
         </Link>
 
-        {/* Big central search with voice + submit */}
-        <div className="mt-5">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitSearch();
-            }}
-            className="relative"
-            role="search"
-          >
-            <Search className="pointer-events-none absolute left-6 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={listening && interim ? interim : q}
-              onChange={(e) => onTypeChange(e.target.value)}
-              placeholder={listening ? "Höre zu…" : "Material suchen"}
-              aria-label="Search materials"
-              className={`block h-32 w-full border-2 bg-card pl-20 pr-32 text-lg shadow-rugged outline-none placeholder:text-muted-foreground placeholder:transition-opacity focus:placeholder:opacity-0 focus:border-primary rounded-full opacity-100 font-normal text-left font-sans ${
-                listening ? "border-primary" : "border-border"
-              }`}
-            />
-            <div className="absolute right-6 top-1/2 flex -translate-y-1/2 items-center gap-2">
-              {q && !listening && (
-                <button
-                  type="button"
-                  onClick={() => setQ("")}
-                  aria-label="Clear search"
-                  className="grid h-14 w-14 place-items-center rounded-full text-muted-foreground active:bg-muted"
-                >
-                  <X className="h-7 w-7" />
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={toggleVoice}
-                aria-label={listening ? "Stop voice input" : "Start voice input"}
-                aria-pressed={listening}
-                title={voiceSupported ? "Voice input" : "Voice input not supported"}
-                className={`tap-target grid h-20 w-20 place-items-center rounded-full transition active:translate-y-0.5 ${
-                  listening
-                    ? "animate-pulse bg-primary text-primary-foreground shadow-press"
-                    : "bg-secondary text-secondary-foreground active:bg-white/10"
-                } ${!voiceSupported ? "opacity-50" : ""}`}
-              >
-                {listening ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
-              </button>
-            </div>
-          </form>
-
-          {/* Voice status hints */}
-          {(listening || voiceError || voiceResolving) && (
-            <p
-              role="status"
-              aria-live="polite"
-              className={`mt-2 px-1 text-xs ${voiceError ? "text-destructive" : "text-muted-foreground"}`}
-            >
-              {voiceError
-                ? `Sprachfehler: ${voiceError}`
-                : voiceResolving
-                  ? "Suche passendes Produkt…"
-                  : interim
-                    ? `Gehört: „${interim}"`
-                    : "Höre zu… bitte sprechen."}
-            </p>
-          )}
-
-          {/* Material classification hint (A/B → procurement warning, C → ok badge) */}
-          <MaterialWarningTooltip classification={materialClass} />
-        </div>
+        {/* Search moved to the bottom of the page — see below CategoryGrid. */}
 
         {/* Live results */}
         {q.trim().length >= 2 && (
