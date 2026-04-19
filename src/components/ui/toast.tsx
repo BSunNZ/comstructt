@@ -37,6 +37,10 @@ const toastVariants = cva(
       variant: {
         default: "border bg-background text-foreground",
         destructive: "destructive group border-destructive bg-destructive text-destructive-foreground",
+        // Green confirmation banner used for "added to cart" feedback.
+        // Uses the primary teal/green token so it matches the in-app
+        // accent rather than introducing a new color.
+        success: "border-primary/30 bg-primary text-primary-foreground",
       },
     },
     defaultVariants: {
