@@ -62,7 +62,7 @@ export function useOrderNotifications() {
     })();
 
     const channel = supabase
-      .channel(`notifications:project:${projectId}`)
+      .channel(`notifications:project:${projectId}:${Math.random().toString(36).slice(2)}`)
       .on(
         "postgres_changes" as never,
         {
