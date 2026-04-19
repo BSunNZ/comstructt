@@ -151,9 +151,24 @@ export const buildOrFilter = (tokens: string[]): string => {
 export const pickBestPrice = (
   rows: SupplierMappingRow[] | null | undefined,
   projectId: string | null | undefined,
-): { price: number | null; priceSource: PriceSource | null; supplierName: string | null } => {
-  if (!rows || rows.length === 0) return { price: null, priceSource: null, supplierName: null };
-  let best: { price: number; priceSource: PriceSource; supplierName: string | null } | null = null;
+): {
+  price: number | null;
+  priceSource: PriceSource | null;
+  supplierName: string | null;
+  listPrice: number | null;
+} => {
+  if (!rows || rows.length === 0)
+    return { price: null, priceSource: null, supplierName: null, listPrice: null };
+  let best:
+    | {
+        price: number;
+        priceSource: PriceSource;
+        supplierName: string | null;
+        // Contract price for THIS supplier row, kept so we can surface it
+        // as the "original" price when the project override wins.
+        contractPrice: number | null;
+      }
+    | null = null;
   for (const r of rows) {
     let resolved: { price: number; source: PriceSource } | null = null;
 
@@ -177,12 +192,32 @@ export const pickBestPrice = (
         price: resolved.price,
         priceSource: resolved.source,
         supplierName: r.suppliers?.name ?? null,
+        contractPrice:
+          typeof r.contract_price === "number" && r.contract_price > 0
+            ? r.contract_price
+            : null,
       };
     }
   }
-  return best
-    ? best
-    : { price: null, priceSource: null, supplierName: null };
+  if (!best) return { price: null, priceSource: null, supplierName: null, listPrice: null };
+
+  // Only show a strikethrough "original price" when the project override
+  // actually beat a higher contract price. If the contract price is equal
+  // or lower (shouldn't happen, but guard anyway), suppress it so we never
+  // render a misleading "saving".
+  const listPrice =
+    best.priceSource === "project" &&
+    best.contractPrice !== null &&
+    best.contractPrice > best.price
+      ? best.contractPrice
+      : null;
+
+  return {
+    price: best.price,
+    priceSource: best.priceSource,
+    supplierName: best.supplierName,
+    listPrice,
+  };
 };
 
 export const scoreProduct = (p: DbProduct, tokens: string[]): number => {
