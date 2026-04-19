@@ -359,7 +359,7 @@ export const useWhisperVoiceInput = ({
             // Silence after speech → arm the auto-stop timer.
             silenceTimerRef.current = window.setTimeout(() => {
               silenceTimerRef.current = null;
-              stop();
+              stopWhisper();
             }, silenceMs);
           }
 
@@ -376,7 +376,7 @@ export const useWhisperVoiceInput = ({
     // Hard timeout so a forgotten mic doesn't record forever.
     maxTimerRef.current = window.setTimeout(() => {
       maxTimerRef.current = null;
-      stop();
+      stopWhisper();
     }, maxRecordingMs);
 
     try {
@@ -388,7 +388,7 @@ export const useWhisperVoiceInput = ({
       setInterim("");
       cleanup();
     }
-  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stop]);
+  }, [supported, listening, lang, silenceMs, maxRecordingMs, cleanup, stopWhisper, native]);
 
   // Cleanup on unmount.
   useEffect(
