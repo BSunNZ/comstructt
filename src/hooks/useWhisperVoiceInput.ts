@@ -105,14 +105,24 @@ export const useWhisperVoiceInput = ({
   silenceMs = 1500,
   maxRecordingMs = 30_000,
 }: UseWhisperVoiceInputOptions = {}) => {
-  // Once the edge function fails, we permanently flip to native Web Speech
-  // so the demo keeps working without round-tripping a broken backend on
-  // every utterance. Persisted in sessionStorage so a page reload during
-  // the same demo doesn't re-trigger the failing call.
-  const [useFallback, setUseFallback] = useState<boolean>(() => {
+  // After a Whisper failure, fall back to native Web Speech for a SHORT
+  // window (5 min). We deliberately do not pin the fallback for the whole
+  // session: a transient backend hiccup must not permanently break voice
+  // on the published site, especially on iOS Safari which has no Web
+  // Speech API at all and would silently appear broken.
+  const FALLBACK_TTL_MS = 5 * 60 * 1000;
+  const readFallbackFlag = (): boolean => {
     if (typeof window === "undefined") return false;
-    return window.sessionStorage.getItem("voice:useNativeFallback") === "1";
-  });
+    const raw = window.sessionStorage.getItem("voice:useNativeFallback");
+    if (!raw) return false;
+    const ts = Number(raw);
+    if (!Number.isFinite(ts) || Date.now() - ts > FALLBACK_TTL_MS) {
+      window.sessionStorage.removeItem("voice:useNativeFallback");
+      return false;
+    }
+    return true;
+  };
+  const [useFallback, setUseFallback] = useState<boolean>(readFallbackFlag);
 
   // Native Web Speech hook — used either as a fallback after a Whisper
   // failure, or as the primary if Whisper isn't usable in this browser.
@@ -290,6 +300,13 @@ export const useWhisperVoiceInput = ({
         if (fnError) throw fnError;
         const text = (data as { text?: string } | null)?.text?.trim() ?? "";
         setInterim("");
+        // Whisper succeeded → clear any stale fallback flag so the user
+        // returns to high-quality transcription on the next utterance.
+        try {
+          window.sessionStorage.removeItem("voice:useNativeFallback");
+        } catch {
+          /* noop */
+        }
         if (text) onFinalRef.current?.(text);
       } catch (e) {
         console.error("[useWhisperVoiceInput] transcription failed — falling back to Web Speech API", e);
@@ -299,7 +316,8 @@ export const useWhisperVoiceInput = ({
         // broken edge function on every utterance.
         if (hasWebSpeechApi() && native.supported) {
           try {
-            window.sessionStorage.setItem("voice:useNativeFallback", "1");
+            // Timestamped so it auto-expires after FALLBACK_TTL_MS.
+            window.sessionStorage.setItem("voice:useNativeFallback", String(Date.now()));
           } catch {
             /* sessionStorage unavailable — fine, we'll just keep the in-memory flag */
           }
