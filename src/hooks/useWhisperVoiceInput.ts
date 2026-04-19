@@ -191,7 +191,7 @@ export const useWhisperVoiceInput = ({
    * Stop recording and ship the audio off to Whisper. Safe to call multiple
    * times — `stoppingRef` guards against double-transcription.
    */
-  const stop = useCallback(() => {
+  const stopWhisper = useCallback(() => {
     if (stoppingRef.current) return;
     stoppingRef.current = true;
 
@@ -214,7 +214,7 @@ export const useWhisperVoiceInput = ({
     }
   }, [cleanup]);
 
-  const start = useCallback(async () => {
+  const startWhisper = useCallback(async () => {
     if (!supported) {
       setError("Voice input not supported in this browser.");
       return;
