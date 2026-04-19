@@ -84,9 +84,10 @@ export function ConstructionAgentFAB() {
     setBusy(true);
     setError(null);
     try {
-      // Use the dedicated `search` action which runs pure semantic search
-      // (no LLM loop) and returns { kits: [...] } already scaled by area.
-      const searchResponse = await supabase.functions.invoke("construction-agent", {
+      // Primary: new dedicated `kit-assistant` function (fresh deploy, no
+      // chat-history baggage). Falls back to legacy `construction-agent` if
+      // the new function isn't deployed yet.
+      let searchResponse = await supabase.functions.invoke("kit-assistant", {
         body: {
           action: "search",
           query: q,
@@ -96,6 +97,20 @@ export function ConstructionAgentFAB() {
           matchThreshold: SEARCH_MATCH_THRESHOLD,
         },
       });
+
+      if (searchResponse.error) {
+        console.warn("[ConstructionAgentFAB] kit-assistant unavailable, trying construction-agent", searchResponse.error);
+        searchResponse = await supabase.functions.invoke("construction-agent", {
+          body: {
+            action: "search",
+            query: q,
+            areaM2: areaM2 ?? undefined,
+            projectId,
+            matchCount: 3,
+            matchThreshold: SEARCH_MATCH_THRESHOLD,
+          },
+        });
+      }
       if (id !== reqIdRef.current) return; // stale
 
       let kits: KitResult[] = [];
