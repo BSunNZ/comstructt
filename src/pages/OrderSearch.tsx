@@ -33,6 +33,7 @@ const toProduct = (r: DbProduct): Product => ({
   category: r.category ?? "Allgemein",
   subcategory: r.subcategory ?? null,
   priceSource: r.priceSource ?? undefined,
+  listPrice: typeof r.listPrice === "number" && r.listPrice > 0 ? r.listPrice : null,
   supplier: r.supplierName ?? null,
 });
 
