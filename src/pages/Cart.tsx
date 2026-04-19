@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { TopBar } from "@/components/TopBar";
 import { QuantityRow } from "@/components/QuantityRow";
 import { useApp } from "@/store/app";
-import { Loader2, Send, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Loader2, Send, ShieldCheck, ShieldAlert, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { PROJECTS } from "@/data/catalog";
 import { createOrder, getProjectMinApproval, isUuid } from "@/lib/orders";
@@ -144,6 +144,23 @@ const Cart = () => {
         back="/order/trade"
       />
       <main className="mx-auto max-w-md px-4 pt-5">
+        <div className="mb-3 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              clearCart();
+              toast({
+                variant: "success",
+                title: "Cart cleared",
+                description: "All items removed.",
+              });
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Clear cart
+          </button>
+        </div>
         {skippedCount > 0 && (
           <div className="mb-3 rounded-xl bg-warning/10 p-3 text-xs text-foreground ring-1 ring-warning/30">
             {skippedCount} item{skippedCount === 1 ? "" : "s"} from the demo catalog cannot be linked to the
