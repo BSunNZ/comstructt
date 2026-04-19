@@ -1,10 +1,12 @@
 import { supabase } from "@/lib/supabase";
 import { CartLine } from "@/data/catalog";
 
-// Postgres enum order_status — the canonical 3-step lifecycle.
-// CREATE TYPE order_status AS ENUM ('requested', 'ordered', 'delivered');
+// Postgres enum order_status — the canonical lifecycle.
+// CREATE TYPE order_status AS ENUM ('requested', 'ordered', 'delivered', 'rejected');
 // The app NEVER writes any other value (no 'draft', no 'approved', no 'pending_approval').
-export type DbOrderStatus = "requested" | "ordered" | "delivered";
+// 'rejected' is set externally by the procurement authority — the app reads it but
+// never writes it from the site-crew UI.
+export type DbOrderStatus = "requested" | "ordered" | "delivered" | "rejected";
 
 // Defensive: legacy rows in the DB may still carry 'approved' / 'draft' / 'pending_approval'
 // from before the migration. We accept them on read, normalize on display, and
@@ -16,6 +18,7 @@ export const normalizeStatus = (s: string | null | undefined): DbOrderStatus => 
     case "requested":
     case "ordered":
     case "delivered":
+    case "rejected":
       return s;
     case "approved": // legacy → merged into ordered
       return "ordered";
