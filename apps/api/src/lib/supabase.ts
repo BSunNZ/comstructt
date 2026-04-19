@@ -353,9 +353,18 @@ const DATABASE_SCHEMAS: Record<DatabaseTableName, DatabaseTableDefinition> = {
 async function run<T>(
   q: PromiseLike<{ data: T | null; error: { message: string; code?: string } | null }>
 ): Promise<T> {
-  const { data, error } = await q;
-  if (error) throw new ApiError(500, error.message);
-  return (data ?? []) as T;
+  try {
+    const { data, error } = await q;
+    if (error) throw new ApiError(500, error.message);
+    return (data ?? []) as T;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ApiError(
+      503,
+      `Network error communicating with Supabase at ${SUPABASE_URL}: ${message}`
+    );
+  }
 }
 
 function getMissingSchemaColumn(error: unknown, tableName: string): string | null {
@@ -891,7 +900,7 @@ async function findSupplierByName(name: string): Promise<DbSupplier | null> {
   return data?.[0] ?? null;
 }
 
-async function ensureSupplier(name: string): Promise<DbSupplier> {
+async function ensureSupplier(name: string, importType: string = "csv"): Promise<DbSupplier> {
   const existing = await findSupplierByName(name);
   if (existing) return existing;
 
@@ -902,7 +911,7 @@ async function ensureSupplier(name: string): Promise<DbSupplier> {
         {
           id: randomUUID(),
           name,
-          import_type: "csv",
+          import_type: importType,
           contract_active: true,
           created_at: new Date().toISOString(),
         },
@@ -1362,6 +1371,7 @@ export async function createCsvImportPreview(input: {
   rows: Record<string, unknown>[];
   mapping?: CsvImportMapping[];
   derivedMapping?: DerivedFieldMapping[];
+  importType?: string;
 }): Promise<CsvImportPreviewResponse> {
   const columns = [...Object.keys(input.rows[0] ?? {}), "AI Subcategory (Preview)"];
   const mapping = sanitizeIncomingMapping(columns, input.mapping);
@@ -1372,7 +1382,7 @@ export async function createCsvImportPreview(input: {
   const stringifiedFirstRow = toStringRecord(input.rows[0] ?? {});
   const firstPreview = buildPreviewRow(stringifiedFirstRow, mapping);
   const supplierName = firstPreview.supplierName || "Unknown Supplier";
-  const supplier = await ensureSupplier(supplierName);
+  const supplier = await ensureSupplier(supplierName, input.importType ?? "csv");
 
   await run(
     db.from("raw_imports").insert([

@@ -39,7 +39,8 @@ import {
 } from "@comstruct/shared";
 import { createProject, listProjects } from "./lib/projects";
 
-const API_BASE = "http://localhost:4000/api";
+// Use relative /api by default so Vite proxy handles local dev ports safely.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 type ViewKey = "imports" | "projects" | "orders" | "catalog" | "supplierData" | "database";
 
@@ -51,6 +52,26 @@ type CatalogFilterState = {
 
 type OrderStatusFilter = OrderStatus | "all";
 type OrderProjectFilter = "all" | string;
+type ToolbarDateRange = "15d" | "1m" | "6m";
+type ImportStatusFilter = "all" | ImportBatchSummary["status"];
+
+function getToolbarRangeStart(range: ToolbarDateRange): number {
+  const now = new Date();
+  const start = new Date(now);
+
+  if (range === "15d") {
+    start.setDate(now.getDate() - 15);
+    return start.getTime();
+  }
+
+  if (range === "1m") {
+    start.setMonth(now.getMonth() - 1);
+    return start.getTime();
+  }
+
+  start.setMonth(now.getMonth() - 6);
+  return start.getTime();
+}
 
 function formatProjectLocation(project: Pick<ProjectSummary, "address" | "zipCode" | "city">): string | null {
   const parts: string[] = [];
@@ -223,14 +244,31 @@ const APPROVAL_ROUTE_LABELS = {
 } as const;
 
 async function readJson<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as T | ErrorResponse;
+  const bodyText = await response.text();
+
+  if (!bodyText.trim()) {
+    if (response.ok) {
+      throw new Error(`Server returned an empty response (${response.status}).`);
+    }
+    throw new Error(`Server returned ${response.status} with an empty response body.`);
+  }
+
+  let payload: T | ErrorResponse;
+  try {
+    payload = JSON.parse(bodyText) as T | ErrorResponse;
+  } catch {
+    if (response.ok) {
+      throw new Error(`Server returned invalid JSON (${response.status}).`);
+    }
+    throw new Error(`Server returned ${response.status}: ${bodyText.slice(0, 220)}`);
+  }
 
   if (!response.ok) {
-    const error = payload as ErrorResponse;
+    const error = payload as Partial<ErrorResponse>;
     throw new Error(
-      error.details && error.details.length > 0
-        ? `${error.error} ${error.details.join(", ")}`
-        : error.error
+      error.details && Array.isArray(error.details) && error.details.length > 0
+        ? `${error.error ?? `Request failed (${response.status})`} ${error.details.join(", ")}`
+        : (error.error ?? `Request failed (${response.status})`)
     );
   }
 
@@ -296,6 +334,7 @@ export default function App() {
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CatalogItem>>({});
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<CsvImportPreviewResponse | null>(null);
   const [projectPricePreview, setProjectPricePreview] =
     useState<ProjectPriceImportPreviewResponse | null>(null);
@@ -317,6 +356,9 @@ export default function App() {
   const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
   const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatusFilter>("pending_approval");
   const [orderProjectFilter, setOrderProjectFilter] = useState<OrderProjectFilter>("all");
+  const [toolbarSearchQuery, setToolbarSearchQuery] = useState("");
+  const [toolbarDateRange, setToolbarDateRange] = useState<ToolbarDateRange>("6m");
+  const [toolbarImportStatus, setToolbarImportStatus] = useState<ImportStatusFilter>("all");
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState("");
   const [filters, setFilters] = useState<CatalogFilterState>({
@@ -330,6 +372,7 @@ export default function App() {
   const [databaseRows, setDatabaseRows] = useState<DatabaseRow[]>([]);
   const [databaseDrafts, setDatabaseDrafts] = useState<Record<string, Record<string, unknown>>>({});
   const [databaseRowCount, setDatabaseRowCount] = useState(0);
+  const [supplierCount, setSupplierCount] = useState<number | null>(null);
   const [databaseSearchQuery, setDatabaseSearchQuery] = useState("");
   const [databaseColumnFilters, setDatabaseColumnFilters] = useState<Record<string, string[]>>({});
   const [activeDatabaseFilterColumn, setActiveDatabaseFilterColumn] = useState<string | null>(null);
@@ -349,6 +392,7 @@ export default function App() {
   const [savingDatabaseRowId, setSavingDatabaseRowId] = useState<string | null>(null);
   const [editingDatabaseCell, setEditingDatabaseCell] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
+  const [showImportHistory, setShowImportHistory] = useState(false);
 
   async function loadImports() {
     const response = await fetch(`${API_BASE}/imports`);
@@ -436,7 +480,33 @@ export default function App() {
     void (async () => {
       try {
         setError(null);
-        await Promise.all([loadImports(), loadCatalog(), loadProjects()]);
+
+        // Load the main lists and lightweight counts in parallel so the sidebar badges
+        // show on first render.
+        await Promise.all([
+          loadImports(),
+          loadCatalog(),
+          loadProjects(),
+          (async () => {
+            try {
+              const ordersResp = await fetch(`${API_BASE}/procurement-orders`);
+              const ordersPayload = await readJson<ProcurementOrdersResponse>(ordersResp);
+              setOrders(ordersPayload.orders);
+            } catch {
+              // Ignore order load failure here; the full workspace will load on demand.
+            }
+
+            try {
+              const suppliersResp = await fetch(`${API_BASE}/database/tables/suppliers/rows`);
+              const suppliersPayload = await readJson<DatabaseTableRowsResponse>(suppliersResp);
+              setSupplierCount(suppliersPayload.rowCount ?? null);
+            } catch {
+              setSupplierCount(null);
+            }
+          })(),
+        ]);
+
+        // Load the currently selected database table rows (default) after counts.
         await loadDatabaseRows();
       } catch (loadError) {
         setError(
@@ -705,6 +775,103 @@ export default function App() {
     }
   }, [orderProjectFilter, orderProjectOptions]);
 
+  const normalizedToolbarSearch = useMemo(
+    () => toolbarSearchQuery.trim().toLowerCase(),
+    [toolbarSearchQuery]
+  );
+
+  const filteredImports = useMemo(() => {
+    const rangeStart = getToolbarRangeStart(toolbarDateRange);
+
+    return imports.filter((item) => {
+      const createdAtMs = Date.parse(item.createdAt);
+      const inRange = Number.isNaN(createdAtMs) ? true : createdAtMs >= rangeStart;
+      if (!inRange) {
+        return false;
+      }
+
+      if (toolbarImportStatus !== "all" && item.status !== toolbarImportStatus) {
+        return false;
+      }
+
+      if (normalizedToolbarSearch.length === 0) {
+        return true;
+      }
+
+      const haystack = [
+        item.id,
+        item.fileName,
+        item.status,
+        item.supplierNames.join(" "),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedToolbarSearch);
+    });
+  }, [imports, normalizedToolbarSearch, toolbarDateRange, toolbarImportStatus]);
+
+  const filteredProjects = useMemo(() => {
+    const rangeStart = getToolbarRangeStart(toolbarDateRange);
+
+    return projects.filter((project) => {
+      const createdAtMs = Date.parse(project.createdAt);
+      const inRange = Number.isNaN(createdAtMs) ? true : createdAtMs >= rangeStart;
+      if (!inRange) {
+        return false;
+      }
+
+      if (normalizedToolbarSearch.length === 0) {
+        return true;
+      }
+
+      const haystack = [
+        project.id,
+        project.name,
+        project.city ?? "",
+        project.zipCode ?? "",
+        project.address ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedToolbarSearch);
+    });
+  }, [normalizedToolbarSearch, projects, toolbarDateRange]);
+
+  const filteredProjectRows = useMemo(() => {
+    if (activeView !== "projects") {
+      return databaseRows;
+    }
+
+    const rangeStart = getToolbarRangeStart(toolbarDateRange);
+
+    return databaseRows.filter((row) => {
+      const createdAtValue = String(row.created_at ?? row.createdAt ?? "");
+      const createdAtMs = Date.parse(createdAtValue);
+      const inRange = Number.isNaN(createdAtMs) ? true : createdAtMs >= rangeStart;
+      if (!inRange) {
+        return false;
+      }
+
+      if (normalizedToolbarSearch.length === 0) {
+        return true;
+      }
+
+      const haystack = [
+        serializeCellValue(row.id),
+        serializeCellValue(row.name),
+        serializeCellValue(row.city),
+        serializeCellValue(row.zip_code),
+        serializeCellValue(row.address),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedToolbarSearch);
+    });
+  }, [activeView, databaseRows, normalizedToolbarSearch, toolbarDateRange]);
+
   const databaseDraftCount = useMemo(
     () => Object.keys(databaseDrafts).length,
     [databaseDrafts]
@@ -818,6 +985,48 @@ export default function App() {
         uploadError instanceof Error
           ? uploadError.message
           : "The CSV import preview failed."
+      );
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function uploadPdf(mapping?: CsvImportMapping[]) {
+    if (!selectedPdfFile) {
+      setError("Select a PDF file first.");
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+    setSuccess(null);
+
+    const formData = new FormData();
+    formData.append("file", selectedPdfFile);
+
+    if (mapping) {
+      formData.append("mapping", JSON.stringify(mapping));
+    }
+
+    formData.append("derivedMapping", JSON.stringify(derivedMappingDraft));
+
+    try {
+      const response = await fetch(`${API_BASE}/imports/pdf`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = await readJson<CsvImportPreviewResponse>(response);
+      setPreview(payload);
+      setMappingDraft(payload.mapping);
+      setDerivedMappingDraft(payload.derivedMapping);
+      setSuccess("PDF preview created. Review the mapping and sample rows.");
+      await loadImports();
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "The PDF import preview failed."
       );
     } finally {
       setIsUploading(false);
@@ -1562,13 +1771,15 @@ export default function App() {
       return (
         <div className="database-summary">
           <p>{selectedTable.description}</p>
-          <div className="database-summary-meta">
-            <span>Supabase table: {selectedDatabaseTable}</span>
-            <span>Primary key: {selectedTable.primaryKey}</span>
-            <span>
-              Editable columns: {visibleDatabaseColumns.filter((column) => column.editable).length}
-            </span>
-          </div>
+          {!(activeView === "supplierData" || activeView === "database") ? (
+            <div className="database-summary-meta">
+              <span>Supabase table: {selectedDatabaseTable}</span>
+              <span>Primary key: {selectedTable.primaryKey}</span>
+              <span>
+                Editable columns: {visibleDatabaseColumns.filter((column) => column.editable).length}
+              </span>
+            </div>
+          ) : null}
         </div>
       );
     }
@@ -1706,10 +1917,12 @@ export default function App() {
                           <div>{column.label}</div>
                           {renderDatabaseColumnFilterMenu(column)}
                         </div>
-                        <span className="column-meta">
-                          {column.type}
-                          {column.editable ? " editable" : " read-only"}
-                        </span>
+                        {!(activeView === "supplierData" || activeView === "database") ? (
+                          <span className="column-meta">
+                            {column.type}
+                            {column.editable ? " editable" : " read-only"}
+                          </span>
+                        ) : null}
                       </th>
                     ))}
                     {!useBulkSave ? <th>Actions</th> : null}
@@ -1852,7 +2065,7 @@ export default function App() {
       key: "supplierData" as const,
       label: "Supplier Data",
       description: "Supplier master data and discount control",
-      count: selectedDatabaseTable === "suppliers" ? databaseRowCount : 0,
+      count: selectedDatabaseTable === "suppliers" ? databaseRowCount : (supplierCount ?? 0),
     },
     {
       key: "database" as const,
@@ -1925,28 +2138,90 @@ export default function App() {
             <div className="utility-toolbar">
               <div className="search-input-wrapper">
                 <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" className="search-input" placeholder="Search..." />
+                <input
+                  type="text"
+                  className="search-input"
+                  placeholder={activeView === "projects" ? "Search projects..." : "Search imports..."}
+                  value={toolbarSearchQuery}
+                  onChange={(event) => setToolbarSearchQuery(event.target.value)}
+                />
               </div>
-              <select className="filter-dropdown">
-                <option>Last 15 days</option>
+              <select
+                className="filter-dropdown"
+                value={toolbarDateRange}
+                onChange={(event) => setToolbarDateRange(event.target.value as ToolbarDateRange)}
+              >
+                <option value="15d">Last 15 days</option>
+                <option value="1m">Last month</option>
+                <option value="6m">Last 6 months</option>
               </select>
-              <select className="filter-dropdown">
-                <option>All Statuses</option>
+              <select
+                className="filter-dropdown"
+                value={toolbarImportStatus}
+                onChange={(event) =>
+                  setToolbarImportStatus(event.target.value as ImportStatusFilter)
+                }
+                disabled={activeView !== "imports"}
+              >
+                <option value="all">All statuses</option>
+                <option value="draft">Draft</option>
+                <option value="confirmed">Confirmed</option>
               </select>
-              <button className="icon-btn">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => setShowImportHistory((s) => !s)}
+                aria-expanded={showImportHistory}
+                style={{ marginLeft: 8 }}
+              >
+                {showImportHistory ? 'Hide history' : `History (${imports.length})`}
               </button>
             </div>
           )}
+
+          {/* Import history dropdown (hidden by default) */}
+          {activeView === "imports" ? (
+            <div style={{ marginTop: 8 }}>
+              {showImportHistory ? (
+                <div className="import-history-dropdown panel" style={{ maxHeight: 320, overflow: 'auto' }}>
+                  <div style={{ padding: 8, borderBottom: '1px solid var(--border-light)' }}>
+                    <strong>Import history</strong>
+                  </div>
+                  <div style={{ display: 'grid', gap: 6, padding: 8 }}>
+                    {filteredImports.length === 0 ? (
+                      <div style={{ color: 'var(--text-secondary)' }}>No recent imports</div>
+                    ) : (
+                      filteredImports.map((imp) => (
+                        <div key={imp.id} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                          <div style={{ flex: '1 1 220px' }}>
+                            <div style={{ fontWeight: 600 }}>{imp.fileName}</div>
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{imp.supplierNames.join(', ')}</div>
+                          </div>
+                          <div style={{ width: 160, color: 'var(--text-secondary)' }}>{new Date(imp.createdAt).toLocaleString()}</div>
+                          <div><span className={`status-pill ${imp.status}`}>{imp.status}</span></div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="data-container">
             {error ? <p className="banner error">{error}</p> : null}
             {success ? <p className="banner success">{success}</p> : null}
 
-            {imports.length === 0 && activeView === "imports" && !selectedFile ? (
+            {activeView === "imports" && filteredImports.length === 0 && !selectedFile && !selectedPdfFile ? (
               <div className="empty-state-layout">
-                <div className="empty-state-title">No imports yet</div>
-                <div className="empty-state-desc">Start importing supplier data and CSV mapping to see them here.</div>
+                <div className="empty-state-title">
+                  {imports.length === 0 ? "No imports yet" : "No matching imports"}
+                </div>
+                <div className="empty-state-desc">
+                  {imports.length === 0
+                    ? "Start importing supplier data and CSV mapping to see them here."
+                    : "Adjust search, timeframe, or status filters to see existing imports."}
+                </div>
                 <button className="btn-primary">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                   Go to docs
@@ -1954,13 +2229,15 @@ export default function App() {
               </div>
             ) : null}
 
+            { /* moved import history to dropdown under toolbar */ }
+
             {activeView === "imports" ? (
               <section className="content-grid">
                 <article className="panel upload-panel">
                   <div className="panel-header">
                     <div>
                       <p className="panel-eyebrow">Import flow</p>
-                      <h3>Upload supplier catalog CSV</h3>
+                      <h3>Upload supplier catalog CSV / PDF</h3>
                     </div>
                   </div>
 
@@ -1980,15 +2257,42 @@ export default function App() {
                       />
                     </label>
 
+                    <label className="field">
+                      <span>PDF file</span>
+                      <input
+                        type="file"
+                        accept=".pdf,application/pdf"
+                        onChange={(event) => setSelectedPdfFile(event.target.files?.[0] ?? null)}
+                      />
+                    </label>
+
                     <div className="button-row">
-                      <button type="submit" disabled={isUploading} className="btn-primary">
+                      <button type="submit" disabled={isUploading || !selectedFile} className="btn-primary">
                         {isUploading ? "Building preview..." : "Create preview"}
                   </button>
                   <button
                     type="button"
                     className="button-secondary"
-                    disabled={isUploading || !selectedFile || mappingDraft.length === 0}
-                    onClick={() => void uploadCsv(mappingDraft)}
+                    disabled={isUploading || !selectedPdfFile}
+                    onClick={() => void uploadPdf()}
+                  >
+                    {isUploading ? "Building preview..." : "Create PDF preview"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    disabled={
+                      isUploading ||
+                      mappingDraft.length === 0 ||
+                      (!selectedFile && !selectedPdfFile)
+                    }
+                    onClick={() => {
+                      if (selectedPdfFile && !selectedFile) {
+                        void uploadPdf(mappingDraft);
+                        return;
+                      }
+                      void uploadCsv(mappingDraft);
+                    }}
                   >
                     Refresh preview
                   </button>
@@ -2016,7 +2320,7 @@ export default function App() {
 
               {!preview ? (
                 <p className="empty-state">
-                  Upload a supplier CSV to inspect the field mapping and review all
+                  Upload a supplier CSV or PDF to inspect the field mapping and review all
                   normalized rows before committing them.
                 </p>
               ) : (
@@ -2223,8 +2527,12 @@ export default function App() {
                   <p className="empty-state">The selected Supabase table could not be loaded.</p>
                 ) : isDatabaseLoading ? (
                   <p className="empty-state">Loading rows from Supabase...</p>
-                ) : databaseRows.length === 0 ? (
-                  <p className="empty-state">No projects found yet.</p>
+                ) : filteredProjectRows.length === 0 ? (
+                  <p className="empty-state">
+                    {databaseRows.length === 0
+                      ? "No projects found yet."
+                      : "No projects match the current search and timeframe filters."}
+                  </p>
                 ) : (
                   <div className="table-shell">
                     <table className="database-table">
@@ -2233,16 +2541,18 @@ export default function App() {
                           {visibleDatabaseColumns.map((column) => (
                             <th key={column.name} className="database-header-cell">
                               <div>{column.label}</div>
-                              <span className="column-meta">
-                                {column.type}
-                                {column.editable ? " editable" : " read-only"}
-                              </span>
+                              {!(activeView === "supplierData" || activeView === "database") ? (
+                                <span className="column-meta">
+                                  {column.type}
+                                  {column.editable ? " editable" : " read-only"}
+                                </span>
+                              ) : null}
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {databaseRows.map((row) => {
+                        {filteredProjectRows.map((row) => {
                           const rowId = getRowId(row, selectedTable);
                           const rowDraft = databaseDrafts[rowId] ?? {};
 
@@ -2383,7 +2693,7 @@ export default function App() {
                         onChange={(event) => setSelectedProjectId(event.target.value)}
                       >
                         <option value="">Select project</option>
-                        {projects.map((project) => (
+                        {filteredProjects.map((project) => (
                           <option key={project.id} value={project.id}>
                             {project.name}
                           </option>
@@ -2975,16 +3285,7 @@ export default function App() {
                               <span className="subline">{item.unit}</span>
                             </td>
                             <td>
-                              <label className="checkbox">
-                                <input
-                                  type="checkbox"
-                                  checked={row.isCMaterial}
-                                  onChange={(event) =>
-                                    updateDraftValue(item.id, "isCMaterial", event.target.checked)
-                                  }
-                                />
-                                <span>{row.isCMaterial ? "Allowed" : "Blocked"}</span>
-                              </label>
+                              <div className="subline">C-material: {row.isCMaterial ? "Yes" : "No"}</div>
                             </td>
                             <td>
                               <span className="subline">Use: {item.consumptionType || "n/a"}</span>

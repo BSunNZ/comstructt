@@ -29,6 +29,7 @@ import {
   validateColumns,
   validateMapping,
 } from "./lib/catalog.js";
+import { extractCanonicalRowsFromPdf } from "./lib/pdfImport.js";
 import {
   ApiError,
   confirmImport,
@@ -94,9 +95,26 @@ app.post(
           ? (JSON.parse(request.body.derivedMapping as string) as DerivedFieldMapping[])
           : undefined;
 
+      const defaultPdfMappingBase: CsvImportMapping[] = [
+        { sourceColumn: "artikel_id", target: "supplierSku" },
+        { sourceColumn: "artikelname", target: "sourceName" },
+        { sourceColumn: "kategorie", target: "sourceCategory" },
+        { sourceColumn: "einheit", target: "unit" },
+        { sourceColumn: "preis_eur", target: "unitPrice" },
+        { sourceColumn: "lieferant", target: "supplierName" },
+        { sourceColumn: "verbrauchsart", target: "consumptionType" },
+        { sourceColumn: "gefahrgut", target: "hazardous" },
+        { sourceColumn: "lagerort", target: "storageLocation" },
+        { sourceColumn: "typische_baustelle", target: "typicalSite" },
+        { sourceColumn: "mindest_bestellmenge", target: "ignore" },
+      ];
+      const defaultPdfMapping = defaultPdfMappingBase.filter((entry) =>
+        columns.includes(entry.sourceColumn)
+      );
+
       const mapping = sanitizeIncomingMapping(
         columns,
-        requestedMapping ?? buildDefaultMapping(columns)
+        requestedMapping ?? defaultPdfMapping
       );
 
       const payload: CsvImportPreviewResponse = await createCsvImportPreview({
@@ -104,6 +122,66 @@ app.post(
         rows: records,
         mapping,
         derivedMapping: requestedDerivedMapping,
+      });
+
+      response.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.post(
+  "/api/imports/pdf",
+  upload.single("file"),
+  async (request, response, next) => {
+    try {
+      if (!request.file) {
+        throw new ApiError(400, "No PDF file was uploaded.");
+      }
+
+      const originalName = request.file.originalname || "upload.pdf";
+      if (!originalName.toLowerCase().endsWith(".pdf")) {
+        throw new ApiError(400, "Please upload a PDF file.");
+      }
+
+      const extraction = await extractCanonicalRowsFromPdf(
+        request.file.buffer,
+        originalName
+      );
+
+      if (extraction.rows.length === 0) {
+        throw new ApiError(
+          400,
+          "No product rows were detected in the PDF.",
+          extraction.statusLog
+        );
+      }
+
+      const records = extraction.rows as Array<Record<string, unknown>>;
+      const columns = Object.keys(records[0] ?? {});
+      const requestedMapping = Array.isArray(request.body.mapping)
+        ? (request.body.mapping as CsvImportMapping[])
+        : request.body.mapping
+          ? (JSON.parse(request.body.mapping as string) as CsvImportMapping[])
+          : undefined;
+      const requestedDerivedMapping = Array.isArray(request.body.derivedMapping)
+        ? (request.body.derivedMapping as DerivedFieldMapping[])
+        : request.body.derivedMapping
+          ? (JSON.parse(request.body.derivedMapping as string) as DerivedFieldMapping[])
+          : undefined;
+
+      const mapping = sanitizeIncomingMapping(
+        columns,
+        requestedMapping ?? buildDefaultMapping(columns)
+      );
+
+      const payload: CsvImportPreviewResponse = await createCsvImportPreview({
+        fileName: originalName,
+        rows: records,
+        mapping,
+        derivedMapping: requestedDerivedMapping,
+        importType: "pdf",
       });
 
       response.json(payload);
@@ -369,12 +447,26 @@ app.use(
       return;
     }
 
-    if (error instanceof Error) {
-      response.status(500).json({ error: error.message });
-      return;
-    }
+      // Normalize common network/fetch failures into 503 Service Unavailable
+      if (error instanceof Error) {
+        const message = error.message || String(error);
+        const isNetworkFailure =
+          message.includes("fetch failed") ||
+          message.includes("Network error") ||
+          // Node DNS/network errors often expose codes like ENOTFOUND/ECONNREFUSED
+          // we inspect `any` for `code` if present.
+          ((error as any).code && ["ENOTFOUND", "ECONNREFUSED", "ECONNRESET", "EAI_AGAIN"].includes((error as any).code));
 
-    response.status(500).json({ error: "Unexpected server error." });
+        if (isNetworkFailure) {
+          response.status(503).json({ error: `Network error communicating with upstream service: ${message}` });
+          return;
+        }
+
+        response.status(500).json({ error: message });
+        return;
+      }
+
+      response.status(500).json({ error: "Unexpected server error." });
   }
 );
 

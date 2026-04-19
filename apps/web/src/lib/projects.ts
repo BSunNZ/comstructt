@@ -5,17 +5,34 @@ import {
   type ProjectsListResponse,
 } from "@comstruct/shared";
 
-const API_BASE = "http://localhost:4000/api";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 async function readJson<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as T | ErrorResponse;
+  const bodyText = await response.text();
+
+  if (!bodyText.trim()) {
+    if (response.ok) {
+      throw new Error(`Server returned an empty response (${response.status}).`);
+    }
+    throw new Error(`Server returned ${response.status} with an empty response body.`);
+  }
+
+  let payload: T | ErrorResponse;
+  try {
+    payload = JSON.parse(bodyText) as T | ErrorResponse;
+  } catch {
+    if (response.ok) {
+      throw new Error(`Server returned invalid JSON (${response.status}).`);
+    }
+    throw new Error(`Server returned ${response.status}: ${bodyText.slice(0, 220)}`);
+  }
 
   if (!response.ok) {
-    const error = payload as ErrorResponse;
+    const error = payload as Partial<ErrorResponse>;
     throw new Error(
-      error.details && error.details.length > 0
-        ? `${error.error} ${error.details.join(", ")}`
-        : error.error
+      error.details && Array.isArray(error.details) && error.details.length > 0
+        ? `${error.error ?? `Request failed (${response.status})`} ${error.details.join(", ")}`
+        : (error.error ?? `Request failed (${response.status})`)
     );
   }
 
