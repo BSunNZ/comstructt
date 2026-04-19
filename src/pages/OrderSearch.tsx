@@ -570,6 +570,16 @@ const OrderSearch = () => {
                                 Projektpreis
                               </span>
                             )}
+                            {p.priceSource === "project" &&
+                              typeof p.listPrice === "number" &&
+                              p.listPrice > p.price && (
+                                <span
+                                  className="text-sm text-muted-foreground line-through"
+                                  title={`Standardpreis €${p.listPrice.toFixed(2)} — du sparst €${(p.listPrice - p.price).toFixed(2)} / ${p.unit}`}
+                                >
+                                  €{p.listPrice.toFixed(2)}
+                                </span>
+                              )}
                           </div>
                         ) : (
                           <p className="mt-1 font-display text-base text-muted-foreground">
