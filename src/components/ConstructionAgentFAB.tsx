@@ -175,19 +175,48 @@ export function ConstructionAgentFAB() {
   const syncEmbeddings = async () => {
     if (syncing || !isSupabaseConfigured) return;
     setSyncing(true);
+    setDiagnostic(null);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
+      // Try the fresh function first; fall back to construction-agent.
+      let res = await supabase.functions.invoke("kit-assistant", {
         body: { action: "sync" },
       });
+      if (res.error) {
+        console.warn("[ConstructionAgentFAB] kit-assistant sync unavailable, falling back", res.error);
+        res = await supabase.functions.invoke("construction-agent", {
+          body: { action: "sync" },
+        });
+      }
+      const { data, error: fnError } = res;
       if (fnError) throw fnError;
-      const synced = typeof data?.synced === "number" ? data.synced : 0;
-      const failed = typeof data?.failed === "number" ? data.failed : 0;
+      const updated =
+        typeof data?.updated === "number"
+          ? data.updated
+          : typeof data?.synced === "number"
+          ? data.synced
+          : 0;
+      const failedCount = Array.isArray(data?.failed)
+        ? data.failed.length
+        : typeof data?.failed === "number"
+        ? data.failed
+        : 0;
+
+      // Diagnose: how many kits have embeddings now?
+      const diag = await supabase.functions.invoke("kit-assistant", {
+        body: { action: "diagnose" },
+      });
+      if (!diag.error && diag.data) {
+        const total = Number(diag.data.total) || 0;
+        const withEmb = Number(diag.data.withEmbedding) || 0;
+        setDiagnostic(`${withEmb} von ${total} Kits haben Embeddings`);
+      }
+
       toast({
         title: "Embeddings aktualisiert",
         description:
-          failed > 0
-            ? `${synced} synchronisiert, ${failed} Fehler.`
-            : `${synced} Kits neu eingebettet.`,
+          failedCount > 0
+            ? `${updated} synchronisiert, ${failedCount} Fehler.`
+            : `${updated} Kits neu eingebettet.`,
       });
       // If the user already searched, refresh the results.
       if (query.trim().length >= 2) {
