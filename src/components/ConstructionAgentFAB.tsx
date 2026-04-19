@@ -82,12 +82,20 @@ export function ConstructionAgentFAB() {
     setBusy(true);
     setError(null);
     try {
+      // The deployed construction-agent expects an OpenAI-style chat payload
+      // ({ messages: [...] }) and returns { reply, recommendations? }. We send
+      // the user's query as a single user message, optionally appending the
+      // m² hint so the model fills in area_m2 on its tool call.
+      const userContent = areaM2 && areaM2 > 0 ? `${q} (${areaM2} m²)` : q;
       const { data, error: fnError } = await supabase.functions.invoke("construction-agent", {
-        body: { action: "search", query: q, projectId, areaM2, matchCount: 3 },
+        body: {
+          projectId,
+          messages: [{ role: "user", content: userContent }],
+        },
       });
       if (id !== reqIdRef.current) return; // stale
       if (fnError) throw fnError;
-      const kits = parseKitResults(data);
+      const kits = parseKitResults(data, q);
       setResults(kits);
       setHasSearched(true);
     } catch (e) {
@@ -318,56 +326,88 @@ function parseArea(input: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function parseKitResults(data: unknown): KitResult[] {
+/**
+ * Accepts both response shapes:
+ *   1. { kits: [...] }                — new search action (when deployed).
+ *   2. { reply, recommendations: [] } — current chat-action response.
+ * For #2 we synthesize a single KitResult so the UI renders the same way.
+ */
+function parseKitResults(data: unknown, query: string): KitResult[] {
   if (!data || typeof data !== "object") return [];
-  const raw = (data as { kits?: unknown }).kits;
-  if (!Array.isArray(raw)) return [];
-  const out: KitResult[] = [];
-  for (const k of raw) {
-    if (!k || typeof k !== "object") continue;
-    const r = k as Record<string, unknown>;
-    const items = Array.isArray(r.items)
-      ? (r.items
-          .map((item): AgentRecommendation | null => {
-            if (!item || typeof item !== "object") return null;
-            const it = item as Record<string, unknown>;
-            const productId = typeof it.productId === "string" ? it.productId : null;
-            const name = typeof it.name === "string" ? it.name : null;
-            const unit = typeof it.unit === "string" ? it.unit : null;
-            const quantity = Number(it.quantity);
-            if (!productId || !name || !unit || !Number.isFinite(quantity) || quantity <= 0)
-              return null;
-            const unitPrice = Number(it.unitPrice);
-            const listPrice = Number(it.listPrice);
-            return {
-              productId,
-              name,
-              sku: typeof it.sku === "string" ? it.sku : null,
-              unit,
-              quantity: Math.max(1, Math.ceil(quantity)),
-              unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : null,
-              supplier: typeof it.supplier === "string" ? it.supplier : null,
-              category: typeof it.category === "string" ? it.category : null,
-              subcategory: typeof it.subcategory === "string" ? it.subcategory : null,
-              priceSource:
-                it.priceSource === "project" || it.priceSource === "contract"
-                  ? it.priceSource
-                  : null,
-              listPrice: Number.isFinite(listPrice) && listPrice > 0 ? listPrice : null,
-            };
-          })
-          .filter(Boolean) as AgentRecommendation[])
-      : [];
-    out.push({
-      kitId: typeof r.kitId === "string" ? r.kitId : String(r.kitId ?? ""),
-      slug: typeof r.slug === "string" ? r.slug : "",
-      name: typeof r.name === "string" ? r.name : "Kit",
-      trade: typeof r.trade === "string" ? r.trade : "",
-      description: typeof r.description === "string" ? r.description : "",
-      similarity: Number(r.similarity) || 0,
-      items,
-      unmatched: Array.isArray(r.unmatched) ? r.unmatched.map(String) : [],
-    });
+  const obj = data as Record<string, unknown>;
+
+  const parseItems = (raw: unknown): AgentRecommendation[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item): AgentRecommendation | null => {
+        if (!item || typeof item !== "object") return null;
+        const it = item as Record<string, unknown>;
+        const productId = typeof it.productId === "string" ? it.productId : null;
+        const name = typeof it.name === "string" ? it.name : null;
+        const unit = typeof it.unit === "string" ? it.unit : null;
+        const quantity = Number(it.quantity);
+        if (!productId || !name || !unit || !Number.isFinite(quantity) || quantity <= 0)
+          return null;
+        const unitPrice = Number(it.unitPrice);
+        const listPrice = Number(it.listPrice);
+        return {
+          productId,
+          name,
+          sku: typeof it.sku === "string" ? it.sku : null,
+          unit,
+          quantity: Math.max(1, Math.ceil(quantity)),
+          unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : null,
+          supplier: typeof it.supplier === "string" ? it.supplier : null,
+          category: typeof it.category === "string" ? it.category : null,
+          subcategory: typeof it.subcategory === "string" ? it.subcategory : null,
+          priceSource:
+            it.priceSource === "project" || it.priceSource === "contract"
+              ? it.priceSource
+              : null,
+          listPrice: Number.isFinite(listPrice) && listPrice > 0 ? listPrice : null,
+        };
+      })
+      .filter(Boolean) as AgentRecommendation[];
+  };
+
+  // Shape #1 — { kits: [...] }
+  if (Array.isArray(obj.kits)) {
+    const out: KitResult[] = [];
+    for (const k of obj.kits) {
+      if (!k || typeof k !== "object") continue;
+      const r = k as Record<string, unknown>;
+      out.push({
+        kitId: typeof r.kitId === "string" ? r.kitId : String(r.kitId ?? ""),
+        slug: typeof r.slug === "string" ? r.slug : "",
+        name: typeof r.name === "string" ? r.name : "Kit",
+        trade: typeof r.trade === "string" ? r.trade : "",
+        description: typeof r.description === "string" ? r.description : "",
+        similarity: Number(r.similarity) || 0,
+        items: parseItems(r.items),
+        unmatched: Array.isArray(r.unmatched) ? r.unmatched.map(String) : [],
+      });
+    }
+    return out;
   }
-  return out;
+
+  // Shape #2 — { reply, recommendations: [] } from the chat action.
+  if (Array.isArray(obj.recommendations)) {
+    const items = parseItems(obj.recommendations);
+    if (items.length === 0) return [];
+    const reply = typeof obj.reply === "string" ? obj.reply : "";
+    return [
+      {
+        kitId: "agent",
+        slug: "agent",
+        name: query.trim() ? `Vorschlag für „${query.trim()}"` : "Vorschlag",
+        trade: "",
+        description: reply,
+        similarity: 1,
+        items,
+        unmatched: [],
+      },
+    ];
+  }
+
+  return [];
 }
