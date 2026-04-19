@@ -172,6 +172,23 @@ Deno.serve(async (req: Request) => {
   }
 });
 
+async function embedQuery(apiKey: string, input: string): Promise<number[] | null> {
+  const res = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: "text-embedding-3-small", input }),
+  });
+  if (!res.ok) {
+    console.error("[search-kits] embed failed", res.status, await res.text());
+    return null;
+  }
+  const json = await res.json();
+  return json?.data?.[0]?.embedding ?? null;
+}
+
 function computeQuantity(
   perM2: number | null,
   baseQty: number,
