@@ -10,10 +10,7 @@ import { PROJECTS } from "@/data/catalog";
 import { createOrder, getProjectMinApproval, isUuid } from "@/lib/orders";
 import { cartTotal, decideInitialStatus } from "@/lib/orderTotals";
 import { CartRecommendations } from "@/components/cart/CartRecommendations";
-import {
-  CartDeliveryCard,
-  CartApprovalCard,
-} from "@/components/cart/CartInfoCards";
+import { CartApprovalCard } from "@/components/cart/CartInfoCards";
 import {
   buildOptimisticRecentProducts,
   mergeRecentOrderedProducts,
@@ -175,7 +172,6 @@ const Cart = () => {
             their respective backends are wired up. */}
         <div className="mt-6 space-y-5">
           <CartRecommendations />
-          <CartDeliveryCard />
           <CartApprovalCard
             threshold={minApproval > 0 ? minApproval : 100}
             needsApproval={needsApproval}
