@@ -779,8 +779,8 @@ const OrderSearch = () => {
       >
         <SheetContent
           side="bottom"
-          className="max-h-[80vh] overflow-y-auto"
-          overlayClassName="bg-black/30"
+          className="max-h-[80vh] overflow-y-auto bg-background"
+          overlayClassName="bg-black/10"
         >
           <SheetHeader className="text-left">
             <SheetTitle className="font-display text-2xl">
