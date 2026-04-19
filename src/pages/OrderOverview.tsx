@@ -240,7 +240,7 @@ const OrderOverview = () => {
         back="/order/trade"
       />
 
-      <main className="mx-auto max-w-md px-4 pt-5 space-y-3">
+      <main className="mx-auto max-w-md px-4 pt-5 space-y-6">
         {loading && (
           <div className="flex items-center justify-center gap-2 rounded-2xl bg-muted p-6 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" /> Loading orders…
