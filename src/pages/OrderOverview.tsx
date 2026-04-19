@@ -13,6 +13,7 @@ import {
   normalizeStatus,
   resolveItemSupplier,
 } from "@/lib/orders";
+import { NotificationBell } from "@/components/NotificationBell";
 import { useApp } from "@/store/app";
 import { PROJECTS } from "@/data/catalog";
 import {

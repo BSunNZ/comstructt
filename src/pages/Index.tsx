@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/store/app";
 import { PROJECTS, ProjectTrade } from "@/data/catalog";
+import { NotificationBell } from "@/components/NotificationBell";
 
 const TRADE_META: Record<ProjectTrade, { Icon: typeof HardHat; tone: string }> = {
   Trockenbau: { Icon: HomeIcon, tone: "bg-[hsl(var(--primary)/0.12)] text-primary" },
