@@ -36,7 +36,7 @@ const Cart = () => {
   // while we're submitting (clearCart fires before nav("/order/status")).
   useEffect(() => {
     if (cart.length === 0 && !submitting) {
-      nav("/order/trade", { replace: true });
+      nav(-1);
     }
   }, [cart.length, submitting, nav]);
 
@@ -141,7 +141,7 @@ const Cart = () => {
       <TopBar
         title="Your Cart"
         subtitle={`${cart.length} item${cart.length === 1 ? "" : "s"}`}
-        back="/order/trade"
+        back=""
         right={
           <button
             type="button"
