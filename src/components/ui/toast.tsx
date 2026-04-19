@@ -14,7 +14,10 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
+      // Anchored to the TOP of the nearest positioned ancestor (the
+      // .phone-shell on desktop, the window on mobile) so the toast
+      // appears as a notification banner inside the iPhone frame.
+      "absolute top-2 inset-x-0 z-[100] mx-auto flex max-h-screen w-full max-w-[calc(100%-1rem)] flex-col gap-2 px-2",
       className,
     )}
     {...props}
