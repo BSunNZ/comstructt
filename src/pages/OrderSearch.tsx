@@ -149,7 +149,7 @@ const OrderSearch = () => {
 
   const bannedTerm = isBanned(q.trim());
   const searchTerm = !bannedTerm ? q : "";
-  const { results: dbResults, loading, error, configured } = useSmartProductSearch(searchTerm, 20);
+  const { results: dbResults, loading, error, configured } = useSmartProductSearch(searchTerm, 20, projectId);
 
   // When the typed query is a planned-procurement (A/B) material, suppress
   // ALL product cards — even loose Supabase matches — so the user only sees
@@ -189,7 +189,7 @@ const OrderSearch = () => {
       }
 
       try {
-        const result = await resolveVoiceProduct(item.phrase);
+        const result = await resolveVoiceProduct(item.phrase, projectId);
 
         if (result.kind === "none") {
           failedRef.current = [...failedRef.current, item.phrase];
