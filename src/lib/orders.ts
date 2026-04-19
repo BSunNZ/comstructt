@@ -239,6 +239,7 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     unit_price: l.product.price > 0 ? l.product.price : null,
     price_source: l.product.priceSource ?? null,
     project_id: input.projectId,
+    supplier_name: l.product.supplier ?? null,
   }));
   const legacyRows = linesToInsert.map((l) => ({
     order_id: created.id,
@@ -273,9 +274,30 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
     .insert(fullRows)
     .select("id");
 
-  // Schema-cache miss for snapshot/audit columns → retry without them.
-  // Covers product_name/unit (2026-04-18 migration) and price_source/project_id
-  // (2026-04-19 project-pricing migration).
+  // Schema-cache miss for snapshot/audit columns → retry, dropping unknown
+  // columns first. Covers product_name/unit (2026-04-18 migration),
+  // price_source/project_id (2026-04-19 project-pricing migration), and
+  // supplier_name (2026-04-19 order-items supplier migration).
+  if (
+    itemsErr &&
+    itemsErr.code === "PGRST204" &&
+    /supplier_name/i.test(itemsErr.message ?? "")
+  ) {
+    console.warn(
+      "[orders] order_items.supplier_name missing — retrying without supplier snapshot. " +
+        "Run db/migrations/2026-04-19_order_items_supplier.sql.",
+      { message: itemsErr.message },
+    );
+    const withoutSupplier = fullRows.map(({ supplier_name: _drop, ...rest }) => {
+      void _drop;
+      return rest;
+    });
+    ({ error: itemsErr, data: insertedItems } = await supabase
+      .from("order_items")
+      .insert(withoutSupplier)
+      .select("id"));
+  }
+
   if (
     itemsErr &&
     itemsErr.code === "PGRST204" &&
@@ -414,15 +436,53 @@ export async function markDelivered(orderId: string): Promise<void> {
 
 /**
  * Fetches all orders for a project, joining order_items and the linked
- * normalized_products row for each item — single round-trip.
+ * normalized_products row (with its supplier mapping) for each item — single
+ * round-trip. Supplier name on each item is preferred from the snapshot
+ * column `supplier_name`; UI components fall back to the joined mapping
+ * via `resolveItemSupplier`.
  */
 export async function listOrdersForProject(projectId: string): Promise<DbOrder[]> {
   const { data, error } = await supabase
     .from("orders")
-    .select("*, order_items(*, normalized_products(*))")
+    .select(
+      "*, order_items(*, normalized_products(*, supplier_product_mapping(contract_price, project_prices, supplier_id, suppliers(name))))",
+    )
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
   return (data ?? []) as DbOrder[];
+}
+
+/**
+ * Resolve the supplier display string for an order_items row. Prefers the
+ * snapshot column written at checkout; falls back to the live join via
+ * supplier_product_mapping → suppliers.name. Returns null when no supplier
+ * can be resolved — UI renders "Lieferant nicht verfügbar".
+ */
+export function resolveItemSupplier(
+  it: DbOrderItem,
+  projectId?: string | null,
+): string | null {
+  if (it.supplier_name && it.supplier_name.trim().length > 0) return it.supplier_name;
+  const rows = it.normalized_products?.supplier_product_mapping ?? null;
+  if (!rows || rows.length === 0) return null;
+  // Mirror pickBestPrice: prefer project-specific, then lowest contract.
+  let best: { price: number; name: string | null } | null = null;
+  for (const r of rows) {
+    let price: number | null = null;
+    if (projectId && r.project_prices && typeof r.project_prices === "object") {
+      const raw = (r.project_prices as Record<string, unknown>)[projectId];
+      const n = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isFinite(n) && n > 0) price = n;
+    }
+    if (price === null && typeof r.contract_price === "number" && r.contract_price > 0) {
+      price = r.contract_price;
+    }
+    if (price === null) continue;
+    if (best === null || price < best.price) {
+      best = { price, name: r.suppliers?.name ?? null };
+    }
+  }
+  return best?.name ?? null;
 }
