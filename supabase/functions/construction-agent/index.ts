@@ -27,8 +27,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const BUILD_VERSION = "v6-2026-04-19T13:42:00Z";
+const BUILD_VERSION = "v7-2026-04-19T13:56:00Z-force-redeploy";
 const DEFAULT_MATCH_THRESHOLD = 0.2;
+const ACTIONS_REQUIRING_MESSAGES = new Set(["chat"]);
 
 const SYSTEM_PROMPT = `You are an expert construction assistant helping a German construction crew on-site.
 
@@ -127,7 +128,8 @@ serve(async (req: Request) => {
       return jsonError(400, "Invalid JSON in request body");
     }
 
-    const action = typeof body.action === "string" ? body.action : "chat";
+    const requestedAction = typeof body.action === "string" ? body.action.trim().toLowerCase() : "chat";
+    const action = requestedAction || "chat";
     console.log(
       `[construction-agent] build=${BUILD_VERSION} action=${action} bodyKeys=${Object.keys(body).join(",")}`,
     );
@@ -325,7 +327,7 @@ serve(async (req: Request) => {
 
     // ----- ACTION: chat (default) ------------------------------------------
     const messages = body.messages as ChatMessage[] | undefined;
-    if (!Array.isArray(messages) || messages.length === 0) {
+    if (ACTIONS_REQUIRING_MESSAGES.has(action) && (!Array.isArray(messages) || messages.length === 0)) {
       return jsonError(400, "Missing 'messages' array in request body");
     }
     const projectId = typeof body.projectId === "string" ? body.projectId : null;
