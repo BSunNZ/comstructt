@@ -15,6 +15,11 @@ export type Product = {
   // supplier_product_mapping. Carried through into the cart + order_items
   // so we have an audit trail for project-specific negotiated pricing.
   priceSource?: "project" | "contract";
+  // Original (non-project) supplier list/contract price, only set when a
+  // project-specific override actually beat a higher contract price.
+  // Rendered as a strikethrough next to the Projektpreis badge so the
+  // user sees the negotiated saving. Null/undefined → no strikethrough.
+  listPrice?: number | null;
   // Supplier name resolved from suppliers.name via supplier_product_mapping
   // (the supplier whose price was picked by `pickBestPrice`). Carried into
   // the cart and persisted on order_items.supplier_name as a snapshot.
