@@ -183,7 +183,25 @@ const OrderOverview = () => {
     }
   };
 
-  const grouped = useMemo(() => {
+  const handleCancel = async (o: DbOrder) => {
+    setUpdatingId(o.id);
+    try {
+      await cancelOrder(o.id);
+      toast({ title: "Order cancelled successfully" });
+      setSelected((s) => (s && s.id === o.id ? null : s));
+      setCancelTarget(null);
+      await refresh();
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      toast({
+        title: `Failed to cancel${err?.code ? ` [${err.code}]` : ""}`,
+        description: err?.message ?? "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
     const out: Record<SectionKey, DbOrder[]> = { Requested: [], Ordered: [], Delivered: [] };
     for (const o of orders) {
       const norm = normalizeStatus(o.status);
