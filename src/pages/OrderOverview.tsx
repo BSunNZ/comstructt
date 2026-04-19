@@ -444,18 +444,14 @@ const OrderOverview = () => {
                 </div>
 
                 {normalizeStatus(selected.status) === "requested" && (
-                  <button
-                    onClick={() => handleConfirm(selected)}
-                    disabled={updatingId === selected.id}
-                    className="tap-target flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold uppercase tracking-wider text-primary-foreground shadow-rugged active:translate-y-0.5 disabled:opacity-60"
-                  >
-                    {updatingId === selected.id ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <ClipboardCheck className="h-5 w-5" />
-                    )}
-                    Freigeben &amp; Bestellen
-                  </button>
+                  <p className="rounded-xl bg-[hsl(45_95%_55%/0.18)] px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-[hsl(38_90%_28%)]">
+                    Wartet auf externe Procurement-Freigabe
+                  </p>
+                )}
+                {normalizeStatus(selected.status) === "rejected" && (
+                  <p className="rounded-xl bg-[hsl(0_85%_55%/0.18)] px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-[hsl(0_75%_32%)]">
+                    Vom Procurement abgelehnt
+                  </p>
                 )}
                 {normalizeStatus(selected.status) === "ordered" && (
                   <button
