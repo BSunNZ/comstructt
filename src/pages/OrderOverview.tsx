@@ -251,7 +251,7 @@ const OrderOverview = () => {
           <div className="rounded-2xl bg-destructive/10 p-4 text-sm text-destructive">{error}</div>
         )}
 
-        {!loading && !error && orderedList.length === 0 && (
+        {!loading && !error && orders.length === 0 && (
           <div className="flex items-center gap-3 rounded-2xl bg-muted p-4">
             <Package className="h-6 w-6 text-muted-foreground" />
             <p className="text-sm font-semibold text-muted-foreground">
@@ -262,86 +262,120 @@ const OrderOverview = () => {
 
         {!loading &&
           !error &&
-          orderedList.map((o) => {
-            // Per-card status meta keeps the color-coded badge visible at
-            // a glance now that grouped section headers are gone.
-            const meta = SECTION_META[sectionForStatus(o.status)];
-            const items = o.order_items ?? [];
-            const count = itemCount(o);
+          visibleSections.map((k) => {
+            const meta = SECTION_META[k];
+            const Icon = meta.Icon;
+            const list = grouped[k];
 
             return (
-              <article
-                key={o.id}
-                className={`rounded-2xl p-3.5 shadow-rugged ring-1 ${meta.cardBg} ${meta.cardRing}`}
-              >
-                <header className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-display text-base leading-tight text-foreground">
-                      {shortId(o.id)}
-                    </p>
-                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                      {o.site_name ?? project.name} · {formatDate(o.created_at)}
+              <section key={k} aria-label={`${meta.label} orders`} className="space-y-2.5">
+                {/* Section header — same visual language as before, but
+                    purely informational (no tabs, no click target). */}
+                <header
+                  className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${meta.headerBg}`}
+                >
+                  <span
+                    className={`grid h-11 w-11 place-items-center rounded-xl bg-card shadow-press ${meta.headerText}`}
+                  >
+                    <Icon className="h-6 w-6" />
+                  </span>
+                  <div className="flex-1 leading-tight">
+                    <h2
+                      className={`font-display text-xl font-bold uppercase tracking-wide ${meta.headerText}`}
+                    >
+                      {meta.label}
+                    </h2>
+                    <p className={`text-xs font-semibold ${meta.headerText} opacity-80`}>
+                      {meta.description}
                     </p>
                   </div>
                   <span
-                    className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.badgeBg} ${meta.badgeText}`}
+                    className={`grid h-9 min-w-9 place-items-center rounded-full bg-card px-2 font-display text-base font-bold ${meta.headerText} shadow-press`}
                   >
-                    <span className={`h-1.5 w-1.5 rounded-full ${meta.accentDot}`} />
-                    {meta.label}
+                    {list.length}
                   </span>
                 </header>
 
-                <ul className="mt-2.5 space-y-1.5">
-                  {items.length === 0 ? (
-                    <li className="rounded-lg bg-card/70 px-2.5 py-2 text-xs text-muted-foreground">
-                      No items linked
-                    </li>
-                  ) : (
-                    items.slice(0, 3).map((it) => (
-                      <li
-                        key={it.id}
-                        className="flex items-center gap-2.5 rounded-lg bg-card/70 px-2.5 py-2"
-                      >
-                        <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold text-foreground ring-1 ring-border tabular-nums">
-                          {it.quantity.toLocaleString("de-DE")}×
-                        </span>
-                        <p className="line-clamp-2 min-w-0 flex-1 text-sm font-semibold leading-tight text-foreground break-words">
-                          {itemName(it)}
-                        </p>
-                      </li>
-                    ))
-                  )}
-                  {items.length > 3 && (
-                    <li className="px-2.5 text-[11px] font-semibold text-muted-foreground">
-                      +{items.length - 3} more
-                    </li>
-                  )}
-                </ul>
+                {list.map((o) => {
+                  const items = o.order_items ?? [];
+                  const count = itemCount(o);
 
-                <footer className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {count} item{count === 1 ? "" : "s"}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    {isWithinCancelWindow(o.created_at) &&
-                      normalizeStatus(o.status) !== "delivered" &&
-                      normalizeStatus(o.status) !== "rejected" && (
-                        <button
-                          onClick={() => setCancelTarget(o)}
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
-                        >
-                          <X className="h-3.5 w-3.5" /> Cancel
-                        </button>
-                      )}
-                    <button
-                      onClick={() => setSelected(o)}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
+                  return (
+                    <article
+                      key={o.id}
+                      className={`rounded-2xl p-3.5 shadow-rugged ring-1 ${meta.cardBg} ${meta.cardRing}`}
                     >
-                      <Eye className="h-3.5 w-3.5" /> Details
-                    </button>
-                  </div>
-                </footer>
-              </article>
+                      <header className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-display text-base leading-tight text-foreground">
+                            {shortId(o.id)}
+                          </p>
+                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                            {o.site_name ?? project.name} · {formatDate(o.created_at)}
+                          </p>
+                        </div>
+                        <span
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.badgeBg} ${meta.badgeText}`}
+                        >
+                          <span className={`h-1.5 w-1.5 rounded-full ${meta.accentDot}`} />
+                          {meta.label}
+                        </span>
+                      </header>
+
+                      <ul className="mt-2.5 space-y-1.5">
+                        {items.length === 0 ? (
+                          <li className="rounded-lg bg-card/70 px-2.5 py-2 text-xs text-muted-foreground">
+                            No items linked
+                          </li>
+                        ) : (
+                          items.slice(0, 3).map((it) => (
+                            <li
+                              key={it.id}
+                              className="flex items-center gap-2.5 rounded-lg bg-card/70 px-2.5 py-2"
+                            >
+                              <span className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-md bg-card px-2 font-display text-sm font-bold text-foreground ring-1 ring-border tabular-nums">
+                                {it.quantity.toLocaleString("de-DE")}×
+                              </span>
+                              <p className="line-clamp-2 min-w-0 flex-1 text-sm font-semibold leading-tight text-foreground break-words">
+                                {itemName(it)}
+                              </p>
+                            </li>
+                          ))
+                        )}
+                        {items.length > 3 && (
+                          <li className="px-2.5 text-[11px] font-semibold text-muted-foreground">
+                            +{items.length - 3} more
+                          </li>
+                        )}
+                      </ul>
+
+                      <footer className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          {count} item{count === 1 ? "" : "s"}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {isWithinCancelWindow(o.created_at) &&
+                            normalizeStatus(o.status) !== "delivered" &&
+                            normalizeStatus(o.status) !== "rejected" && (
+                              <button
+                                onClick={() => setCancelTarget(o)}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10"
+                              >
+                                <X className="h-3.5 w-3.5" /> Cancel
+                              </button>
+                            )}
+                          <button
+                            onClick={() => setSelected(o)}
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-card"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Details
+                          </button>
+                        </div>
+                      </footer>
+                    </article>
+                  );
+                })}
+              </section>
             );
           })}
       </main>
