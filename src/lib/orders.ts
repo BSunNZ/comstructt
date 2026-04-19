@@ -280,7 +280,7 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
   // supplier_name (2026-04-19 order-items supplier migration).
   if (
     itemsErr &&
-    itemsErr.code === "PGRST204" &&
+    (itemsErr.code === "PGRST204" || itemsErr.code === "42703") &&
     /supplier_name/i.test(itemsErr.message ?? "")
   ) {
     console.warn(
@@ -300,7 +300,7 @@ export async function createOrder(input: CreateOrderInput): Promise<DbOrder> {
 
   if (
     itemsErr &&
-    itemsErr.code === "PGRST204" &&
+    (itemsErr.code === "PGRST204" || itemsErr.code === "42703") &&
     /product_name|unit|price_source|project_id/i.test(itemsErr.message ?? "")
   ) {
     console.warn(

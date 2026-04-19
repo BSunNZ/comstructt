@@ -90,7 +90,14 @@ export async function fetchRecentOrderedProducts(
   let data: unknown = first.data;
   let error: typeof first.error = first.error;
 
-  if (error && error.code === "PGRST204" && /supplier_name/i.test(error.message ?? "")) {
+  // PostgREST returns PGRST204 ("column not in schema cache") and Postgres
+  // returns 42703 ("column does not exist") depending on whether the
+  // schema cache is stale or the column is genuinely missing. Handle both.
+  if (
+    error &&
+    (error.code === "PGRST204" || error.code === "42703") &&
+    /supplier_name/i.test(error.message ?? "")
+  ) {
     console.warn(
       "[recent-ordered] supplier_name snapshot column missing — retrying without it. " +
         "Run db/migrations/2026-04-19_order_items_supplier.sql.",
