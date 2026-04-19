@@ -470,14 +470,6 @@ const OrderSearch = () => {
               >
                 {listening ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
               </button>
-              <button
-                type="submit"
-                aria-label="Submit search"
-                disabled={q.trim().length === 0}
-                className="tap-target grid h-20 w-20 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-press active:translate-y-0.5 disabled:opacity-40"
-              >
-                <Send className="h-8 w-8" />
-              </button>
             </div>
           </form>
 
