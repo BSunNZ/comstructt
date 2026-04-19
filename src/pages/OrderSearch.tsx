@@ -52,7 +52,8 @@ const OrderSearch = () => {
   // React Query cache is optimistically updated after checkout and then
   // invalidated/refetched on createOrder success so the newest purchase
   // appears immediately without a page reload.
-  const { items: recentOrdered, loading: recentLoading } = useRecentOrderedProducts(projectId, 8);
+  const { items: recentOrdered, loading: recentLoading, clearLocal: clearRecent } =
+    useRecentOrderedProducts(projectId, 8);
 
   const [q, setQ] = useState("");
   const [misuse, setMisuse] = useState<string | null>(null);
