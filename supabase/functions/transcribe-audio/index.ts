@@ -36,7 +36,10 @@ const corsHeaders = {
 // hint to prefer these spellings. Keep it short — long prompts cost tokens
 // and can hurt accuracy on out-of-vocabulary words.
 const GERMAN_CONSTRUCTION_PROMPT = [
-  "Baustelle, Bestellung, Lieferung, Stück, Packung, Karton, Rolle, Sack, Eimer.",
+  "Kauf, kaufe, kaufen, einkaufen, Einkauf, Kauf bitte, kauf mir.",
+  "Bestell, bestelle, bestellen, Bestellung, nachbestellen, Nachbestellung, bestell bitte.",
+  "Beispiele: Kauf zehn Schrauben. Bestelle fünf Säcke Zement. Kauf bitte Silikon.",
+  "Baustelle, Lieferung, Stück, Packung, Karton, Rolle, Sack, Eimer.",
   "Schrauben, Dübel, Nägel, Spax, TX20, TX25, Torx, Kreuzschlitz.",
   "Gipskarton, Rigips, Trockenbau, Spachtel, Fugenband, CD-Profil, UD-Profil.",
   "Beton, Estrich, Mörtel, Bewehrung, Rödeldraht.",
@@ -45,6 +48,32 @@ const GERMAN_CONSTRUCTION_PROMPT = [
   "Dachpappe, Unterspannbahn, Dachziegel.",
   "4x40, 5x60, 3,5x35, 16mm, 75mm.",
 ].join(" ");
+
+// Whisper sometimes drops the leading hard 'K' of "Kauf" (hearing "auf")
+// or splits "bestell" into "be stell". Normalize the most common cases so
+// downstream intent parsing always sees clean command verbs.
+function normalizeCommandWords(text: string): string {
+  if (!text) return text;
+  let out = text;
+
+  // Leading "auf" → "Kauf" (most common drop of the hard K)
+  out = out.replace(/^(\s*)auf\b/i, (_m, ws) => `${ws}Kauf`);
+  // After sentence punctuation: ". auf" → ". Kauf"
+  out = out.replace(/([.!?]\s+)auf\b/g, (_m, p) => `${p}Kauf`);
+  // "kauft mir/uns/bitte/mal" → "kauf …" (stray 't' from Whisper)
+  out = out.replace(/\bkauft\b(?=\s+(mir|uns|bitte|mal|noch))/gi, (m) =>
+    m[0] === "K" ? "Kauf" : "kauf",
+  );
+  // "be stell" / "be-stell" → "bestell" (with optional suffix)
+  out = out.replace(
+    /\bbe[\s-]stell(e|t|en|ung|ungen)?\b/gi,
+    (_m, suf = "") => `bestell${suf || ""}`,
+  );
+  // "be stelle" → "bestelle"
+  out = out.replace(/\bbe[\s-]stelle\b/gi, "bestelle");
+
+  return out;
+}
 
 // Decode a base64 string to a Uint8Array without blowing the stack on
 // large recordings. atob → binary string → Uint8Array.
@@ -122,7 +151,8 @@ serve(async (req: Request) => {
     }
 
     const data = (await whisperRes.json()) as { text?: string };
-    return new Response(JSON.stringify({ text: data.text ?? "" }), {
+    const cleaned = normalizeCommandWords(data.text ?? "");
+    return new Response(JSON.stringify({ text: cleaned }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
