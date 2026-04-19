@@ -21,6 +21,7 @@ const item = (unit_price: number | null, quantity: number, id = "i1"): DbOrderIt
   product_id: null,
   product_name: null,
   unit: null,
+  supplier_name: null,
   unit_price,
   quantity,
   line_total: unit_price !== null ? unit_price * quantity : null,

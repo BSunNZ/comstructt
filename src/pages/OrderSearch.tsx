@@ -33,6 +33,7 @@ const toProduct = (r: DbProduct): Product => ({
   category: r.category ?? "Allgemein",
   subcategory: r.subcategory ?? null,
   priceSource: r.priceSource ?? undefined,
+  supplier: r.supplierName ?? null,
 });
 
 const OrderSearch = () => {
@@ -575,11 +576,13 @@ const OrderSearch = () => {
                             Preis auf Anfrage
                           </p>
                         )}
-                        {supplierByProduct.get(p.id) && (
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            Lieferant: {supplierByProduct.get(p.id)}
-                          </p>
-                        )}
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Lieferant: {supplierByProduct.get(p.id) || (
+                            <span className="italic text-muted-foreground/70">
+                              nicht verfügbar
+                            </span>
+                          )}
+                        </p>
                       </div>
                     </div>
 
