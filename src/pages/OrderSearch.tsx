@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { TopBar } from "@/components/TopBar";
-import { Search, ShoppingCart, Plus, Minus, Repeat, MapPin, Sparkles, X, Loader2, ClipboardList, Mic, MicOff, Send, Check } from "lucide-react";
+import { Search, ShoppingCart, Plus, Minus, Repeat, MapPin, Sparkles, X, Loader2, ClipboardList, Mic, MicOff, Send } from "lucide-react";
 import { useApp } from "@/store/app";
 import { isBanned, PROJECTS, Product } from "@/data/catalog";
 import { useRecentOrderedProducts } from "@/hooks/useRecentOrderedProducts";
