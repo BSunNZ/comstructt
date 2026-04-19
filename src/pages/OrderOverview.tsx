@@ -210,23 +210,17 @@ const OrderOverview = () => {
     }
   };
 
-  const grouped = useMemo(() => {
-    const out: Record<SectionKey, DbOrder[]> = {
-      Requested: [],
-      Ordered: [],
-      Delivered: [],
-      Rejected: [],
-    };
-    for (const o of orders) {
-      const norm = normalizeStatus(o.status);
-      for (const k of SECTION_ORDER) {
-        if (SECTION_META[k].matches.includes(norm)) {
-          out[k].push(o);
-          break;
-        }
-      }
-    }
-    return out;
+  // Single unified list. Sort by section priority (Requested first, then
+  // Ordered, Delivered, Rejected) and within each section by newest first
+  // — keeps the most actionable orders at the top now that the tab bar
+  // is gone.
+  const orderedList = useMemo(() => {
+    const priority = (o: DbOrder) => SECTION_ORDER.indexOf(sectionForStatus(o.status));
+    return [...orders].sort((a, b) => {
+      const dp = priority(a) - priority(b);
+      if (dp !== 0) return dp;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
   }, [orders]);
 
   return (
