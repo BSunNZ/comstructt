@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { orderItemsTotal } from "@/lib/orderTotals";
+import { displayOrderTotal, formatEuro } from "@/lib/orderTotals";
 import { TopBar } from "@/components/TopBar";
 import { Clock, Truck, CheckCircle2, Package, Loader2, Eye, X, Ban } from "lucide-react";
 import {
@@ -404,7 +404,7 @@ const OrderOverview = () => {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">Gesamtsumme</span>
                   <span className="font-display text-lg">
-                    €{orderItemsTotal(selected.order_items).toFixed(2)}
+                    {formatEuro(displayOrderTotal(selected))}
                   </span>
                 </div>
                 {selected.ordered_by && (
