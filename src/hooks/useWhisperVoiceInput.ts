@@ -105,10 +105,38 @@ export const useWhisperVoiceInput = ({
   silenceMs = 1500,
   maxRecordingMs = 30_000,
 }: UseWhisperVoiceInputOptions = {}) => {
-  const [supported] = useState(detectSupport);
-  const [listening, setListening] = useState(false);
-  const [interim, setInterim] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // Once the edge function fails, we permanently flip to native Web Speech
+  // so the demo keeps working without round-tripping a broken backend on
+  // every utterance. Persisted in sessionStorage so a page reload during
+  // the same demo doesn't re-trigger the failing call.
+  const [useFallback, setUseFallback] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.sessionStorage.getItem("voice:useNativeFallback") === "1";
+  });
+
+  // Native Web Speech hook — used either as a fallback after a Whisper
+  // failure, or as the primary if Whisper isn't usable in this browser.
+  // Maps the bare "de" tag to the BCP-47 form Web Speech expects.
+  const nativeLang = lang.includes("-") ? lang : `${lang}-${lang.toUpperCase()}`;
+  const native = useVoiceInput({ lang: nativeLang, onFinal, silenceMs });
+
+  const [whisperSupported] = useState(detectSupport);
+  // From the caller's perspective, voice input is "supported" if EITHER
+  // path works.
+  const supported = whisperSupported || native.supported;
+
+  const [whisperListening, setWhisperListening] = useState(false);
+  const [whisperInterim, setWhisperInterim] = useState("");
+  const [whisperError, setWhisperError] = useState<string | null>(null);
+
+  // When in fallback mode, mirror the native hook's state outwards.
+  const listening = useFallback ? native.listening : whisperListening;
+  const interim = useFallback ? native.interim : whisperInterim;
+  const error = useFallback ? native.error : whisperError;
+  // Backwards-compatible setters used by the legacy Whisper path below.
+  const setListening = setWhisperListening;
+  const setInterim = setWhisperInterim;
+  const setError = setWhisperError;
 
   // Refs survive re-renders without retriggering effects.
   const recorderRef = useRef<MediaRecorder | null>(null);
