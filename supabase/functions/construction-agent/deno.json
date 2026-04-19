@@ -1,4 +1,7 @@
 {
   "nodeModulesDir": "auto",
-  "imports": {}
+  "imports": {},
+  "tasks": {
+    "build-marker": "echo construction-agent-v7-force-redeploy"
+  }
 }
