@@ -31,6 +31,15 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useVoiceInput } from "@/hooks/useVoiceInput";
+
+// Detect whether the browser exposes the Web Speech API. We use this to
+// decide whether a Whisper failure can fall back to native recognition.
+const hasWebSpeechApi = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+  return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition);
+};
 
 export type UseWhisperVoiceInputOptions = {
   /** ISO-639-1 language hint passed to Whisper. Defaults to "de". */
