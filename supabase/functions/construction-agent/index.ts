@@ -105,7 +105,19 @@ serve(async (req: Request) => {
       return jsonError(500, "Supabase service role credentials are not configured");
     }
 
-    const body = (await req.json()) as { messages?: ChatMessage[] };
+    // Safely parse JSON body — empty body or malformed JSON should yield 400,
+    // not crash the function with "Unexpected end of JSON input".
+    let body: { messages?: ChatMessage[] } = {};
+    try {
+      const raw = await req.text();
+      if (!raw || !raw.trim()) {
+        return jsonError(400, "Request body is empty. Expected JSON: { messages: [...] }");
+      }
+      body = JSON.parse(raw) as { messages?: ChatMessage[] };
+    } catch (parseErr) {
+      console.error("[construction-agent] failed to parse JSON body", parseErr);
+      return jsonError(400, "Invalid JSON in request body");
+    }
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return jsonError(400, "Missing 'messages' array in request body");
     }
